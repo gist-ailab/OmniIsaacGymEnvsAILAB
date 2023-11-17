@@ -77,7 +77,6 @@ def set_drive_max_force(drive, max_force):
 
 def set_drive(prim_path, drive_type, target_type, target_value, stiffness, damping, max_force) -> None:
     drive = set_drive_type(prim_path, drive_type)
-
     # set target type ("position" or "velocity")
     if target_type == "position":
         set_drive_target_position(drive, target_value)

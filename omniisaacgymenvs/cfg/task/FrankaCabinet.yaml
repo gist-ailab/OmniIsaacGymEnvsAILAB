@@ -5,7 +5,8 @@ physics_engine: ${..physics_engine}
 
 # if given, will override the device setting in gym. 
 env:
-  numEnvs: ${resolve_default:4096,${...num_envs}}
+  # numEnvs: ${resolve_default:4096,${...num_envs}}
+  numEnvs: ${resolve_default:4,${...num_envs}}
   envSpacing: 3.0
   episodeLength: 500
   enableDebugVis: False
@@ -18,10 +19,12 @@ env:
   startPositionNoise: 0.0
   startRotationNoise: 0.0
 
-  numProps: 4
-  aggregateMode: 3
+  numProps: 4 # 서랍에 있는 물건 개수
+  aggregateMode: 3  # 안 쓰는데 왜 있는건지?
 
-  actionScale: 7.5
+
+  ########## reward parameters ##########
+  actionScale: 2.5
   dofVelocityScale: 0.1
   distRewardScale: 2.0
   rotRewardScale: 0.5
