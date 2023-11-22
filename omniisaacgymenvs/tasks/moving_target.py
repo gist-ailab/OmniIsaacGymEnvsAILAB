@@ -3,22 +3,23 @@ from torch import linalg as LA
 import numpy as np
 import cv2
  
-# from omni.isaac.core.utils.extensions import enable_extension
-# enable_extension("omni.replicator.isaac")   # required by OIGE
+from omni.isaac.core.utils.extensions import enable_extension
+enable_extension("omni.replicator.isaac")   # required by PytorchListener
 # enable_extension("omni.kit.window.viewport")  # enable legacy viewport interface
 
 from omniisaacgymenvs.tasks.base.rl_task import RLTask
 from omniisaacgymenvs.robots.articulations.ur5e_tool import UR5eTool
 from omniisaacgymenvs.robots.articulations.views.ur5e_view import UR5eView
 from omniisaacgymenvs.sensors.views.lidar_view import LidarView
+from omni.replicator.isaac.scripts.writers.pytorch_listener import PytorchListener
 
 import omni
 from omni.isaac.core.prims import RigidPrimView
-from omni.isaac.core.prims.base_sensor import BaseSensor
-from omni.isaac.core.articulations import ArticulationView
+# from omni.isaac.core.prims.base_sensor import BaseSensor
+# from omni.isaac.core.articulations import ArticulationView
 from omni.isaac.core.objects import DynamicCylinder, DynamicSphere, DynamicCuboid
-from omni.isaac.core.materials import PhysicsMaterial
-from omni.isaac.core.utils.string import find_unique_string_name
+# from omni.isaac.core.materials import PhysicsMaterial
+# from omni.isaac.core.utils.string import find_unique_string_name
 from omni.isaac.core.utils.prims import get_prim_at_path, is_prim_path_valid
 # from omni.isaac.sensor import Camera, LidarRtx, RotatingLidarPhysX
 from omni.kit.viewport.utility import get_active_viewport
@@ -67,7 +68,8 @@ TASK_CFG = {"test": False,
                              "add_ground_plane": True,
                              "use_flatcache": True,
                              "enable_scene_query_support": True,    # for getting point cloud
-                             "enable_cameras": False,
+                            #  "enable_cameras": False,
+                             "enable_cameras": True,    # 231121 added BSH for PytorchListener
                              "default_physics_material": {"static_friction": 1.0,
                                                          "dynamic_friction": 1.0,
                                                          "restitution": 0.0},
@@ -122,10 +124,12 @@ TASK_CFG = {"test": False,
                                         "contact_offset": 0.005,
                                         "rest_offset": 0.0},
                              "goal": {"override_usd_defaults": False,
-                                      "make_kinematic": False,
-                                      "fixed_base": True,
+                                      "make_kinematic": True,   # 이걸 넣어 주어야 goal이 움직이지 않음
                                       "enable_self_collisions": False,
-                                      "density": -1
+                                      "enable_gyroscopic_forces": True,
+                                    #   "fixed_base": True,
+                                      "density": -1,
+                                    #   "max_depenetration_velocity": 1000.0,
                                       },
                             }
                     }
@@ -133,6 +137,14 @@ TASK_CFG = {"test": False,
 
 class MovingTargetTask(RLTask):
     def __init__(self, name, sim_config, env, offset=None) -> None:
+        #################### BSH
+        import omni.replicator.core as rep
+        self.rep = rep
+        self.camera_width = 640
+        self.camera_height = 480
+        self.pytorch_listener = PytorchListener
+        #################### BSH
+
         self.update_config(sim_config)
 
         self.step_num = 0
@@ -198,7 +210,8 @@ class MovingTargetTask(RLTask):
         self.get_goal()
         # self.get_lidar()
 
-        super().set_up_scene(scene)
+        RLTask.set_up_scene(self, scene)
+        # super().set_up_scene(scene)
 
         # robot view
         self._robots = UR5eView(prim_paths_expr="/World/envs/.*/robot", name="robot_view")
@@ -218,10 +231,41 @@ class MovingTargetTask(RLTask):
         # Used to interact with the LIDAR
         self._point_cloud = {}
         # self.lidarInterface = _range_sensor.acquire_lidar_sensor_interface() # Used to interact with the LIDAR
+        self._point_cloud[0] = LidarView(prim_paths=f"/World/envs/env_0/robot/lidar", name="lidar_view_0")
+        self._point_cloud[1] = LidarView(prim_paths=f"/World/envs/env_1/robot/lidar", name="lidar_view_1")
+        self._point_cloud[2] = LidarView(prim_paths=f"/World/envs/env_2/robot/lidar", name="lidar_view_2")
+        self._point_cloud[3] = LidarView(prim_paths=f"/World/envs/env_3/robot/lidar", name="lidar_view_3")
+
+        scene.add(self._point_cloud[0])
+        scene.add(self._point_cloud[1])
+        scene.add(self._point_cloud[2])
+        scene.add(self._point_cloud[3])
+
+        # for i in range(self._num_envs):
+        #     # self._lidars = LidarView(prim_paths_expr=f"/World/envs/.*/robot/lidar/lidar", name="lidar_view")
+        #     self._point_cloud[i] = LidarView(prim_paths=f"/World/envs/env_{i}/robot/lidar/lidar", name=f"lidar_view_{i}")
+            
+        #     scene.add(self._point_cloud[i])
+
+        ### 231121 added BSH
+        self.render_products = []
+        env_pos = self._env_pos.cpu()
         for i in range(self._num_envs):
-            # self._lidars = LidarView(prim_paths_expr=f"/World/envs/.*/robot/lidar/lidar", name="lidar_view")
-            self._point_cloud[i] = LidarView(prim_paths=f"/World/envs/env_{i}/robot/lidar/lidar", name=f"lidar_view_{i}")
-            scene.add(self._point_cloud[i])   
+            self.rep.create.stereo_camera
+            camera = self.rep.create.camera(
+                position=(-4.2 + env_pos[i][0], env_pos[i][1], 3.0), look_at=(env_pos[i][0], env_pos[i][1], 2.55))
+            render_product = self.rep.create.render_product(camera, resolution=(self.camera_width, self.camera_height))
+            self.render_products.append(render_product)
+
+        ### 231121 added BSH
+        # start replicator to capture image data
+        self.rep.orchestrator._orchestrator._is_started = True
+
+        # initialize pytorch writer for vectorized collection
+        self.pytorch_listener = PytorchListener
+        self.pytorch_writer = self.rep.WriterRegistry.get("PytorchWriter")
+        self.pytorch_writer.initialize(listener=self.pytorch_listener, device="cuda")
+        self.pytorch_writer.attach(self.render_products)
             
 
         # get tool semantic data
@@ -309,6 +353,10 @@ class MovingTargetTask(RLTask):
         self._sim_config.apply_articulation_settings("goal",
                                                      get_prim_at_path(goal.prim_path),
                                                      self._sim_config.parse_actor_config("goal"))
+    
+    def get_lidar(self):
+        # TODO: get lidar through code not from USD
+        return
 
     def init_data(self) -> None:
         self.robot_default_dof_pos = torch.tensor(np.radians([-40, -45, 60, -100, -90, 90.0,
@@ -415,6 +463,13 @@ class MovingTargetTask(RLTask):
         #     print("Semantics", np.unique(semantics))
         '''Consider async when train with multiple envs point cloud'''
 
+        ##### 231121 added BSH
+        # retrieve RGB data from all render products
+        # images = self.pytorch_listener.get_rgb_data()
+        # from torchvision.utils import save_image, make_grid
+        # img = images/255
+        # save_image(make_grid(img, nrows = 2), 'cartpole_export.png')
+
         robot_dof_pos = self._robots.get_joint_positions(clone=False)
         robot_dof_vel = self._robots.get_joint_velocities(clone=False)
         # print(f'\nrobot_dof_pos:\n{robot_dof_pos}\n')
@@ -424,36 +479,36 @@ class MovingTargetTask(RLTask):
         target_pos, target_rot = self._targets.get_local_poses()
         goal_pos, goal_rot = self._goals.get_local_poses()
 
-        # TODO: get point cloud of the tool from lidar
-        for i in range(self._num_envs):
-            lidar_prim_path = self._point_cloud[i].prim_path
-            point_cloud = self._point_cloud[i]._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
-            semantic = self._point_cloud[i]._lidar_sensor_interface.get_semantic_data(lidar_prim_path)
+        # # TODO: get point cloud of the tool from lidar
+        # for i in range(self._num_envs):
+            # lidar_prim_path = self._point_cloud[i].prim_path
+            # point_cloud = self._point_cloud[i]._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
+        #     semantic = self._point_cloud[i]._lidar_sensor_interface.get_semantic_data(lidar_prim_path)
 
-            pcd = np.reshape(point_cloud, (point_cloud.shape[0]*point_cloud.shape[1], 3))
-            pcd_semantic = np.reshape(semantic, -1)
+        #     pcd = np.reshape(point_cloud, (point_cloud.shape[0]*point_cloud.shape[1], 3))
+        #     pcd_semantic = np.reshape(semantic, -1)
 
-            index = np.unique(pcd_semantic)[-1]
-            tool_pcd_idx = np.where(pcd_semantic==index)[0]
-            tool_pcd = pcd[tool_pcd_idx]
+        #     index = np.unique(pcd_semantic)[-1]
+        #     tool_pcd_idx = np.where(pcd_semantic==index)[0]
+        #     tool_pcd = pcd[tool_pcd_idx]
 
-            tool_pcd_tensor = torch.from_numpy(tool_pcd).to(self._device)
-            # print(tool_pcd_tensor.shape)
+        #     tool_pcd_tensor = torch.from_numpy(tool_pcd).to(self._device)
+        #     # print(tool_pcd_tensor.shape)
 
-            '''
-            현재 쓰고있는 obs_buf에 point cloud를 넣으려면 일정 수 만큼 sampling 해서 넣어야 할듯
-            허나, 그 전에 한번 feature extraction을 해서 넣어야 할듯
-            '''
-            # # visulaize tool point cloud
-            # tool_point_cloud = o3d.geometry.PointCloud()
-            # tool_point_cloud.points = o3d.utility.Vector3dVector(tool_pcd)
-            # o3d.visualization.draw_geometries([tool_point_cloud],
-            #                                   window_name='tool point cloud')
+        #     '''
+        #     현재 쓰고있는 obs_buf에 point cloud를 넣으려면 일정 수 만큼 sampling 해서 넣어야 할듯
+        #     허나, 그 전에 한번 feature extraction을 해서 넣어야 할듯
+        #     '''
+        #     # # visulaize tool point cloud
+        #     # tool_point_cloud = o3d.geometry.PointCloud()
+        #     # tool_point_cloud.points = o3d.utility.Vector3dVector(tool_pcd)
+        #     # o3d.visualization.draw_geometries([tool_point_cloud],
+        #     #                                   window_name='tool point cloud')
 
-            # # visualize point cloud with lidar frame
-            # for i in range(self.num_envs):
-            #     self.visualize_point_cloud(view_idx = i,
-            #                             lidar_position = np.array([0.35, 0.5, 0.4]))
+        #     # # visualize point cloud with lidar frame
+        #     # for i in range(self.num_envs):
+        #     #     self.visualize_point_cloud(view_idx = i,
+        #     #                             lidar_position = np.array([0.35, 0.5, 0.4]))
 
 
         if self.previous_target_position == None:
