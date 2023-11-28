@@ -19,7 +19,6 @@ env:
   startPositionNoise: 0.0
   startRotationNoise: 0.0
 
-  numProps: 4 # 서랍에 있는 물건 개수
   aggregateMode: 3  # 안 쓰는데 왜 있는건지?
 
   controlSpace: "cartesian"
