@@ -43,11 +43,12 @@ sim:
   add_ground_plane: True
   add_distant_light: False
   use_fabric: True
-  enable_scene_query_support: False
+  enable_scene_query_support: True  # for getting point cloud
   disable_contact_processing: False
 
   # set to True if you use camera sensors in the environment
-  enable_cameras: False
+  enable_cameras: False   # 231121 added BSH for PytorchListener
+  # enable_cameras: True
 
   default_physics_material:
     static_friction: 1.0
@@ -119,7 +120,8 @@ sim:
   
   goal: # BSH
     override_usd_defaults: False
-    make_kinematic: False
-    fixed_base: True
-    enable_self_collisions: True
+    make_kinematic: True  # BSH 이게 True여야 움직이지 않는 물체가 됨
+    # fixed_base: True
+    enable_self_collisions: False
+    enable_gyroscopic_forces: True
     density: -1
