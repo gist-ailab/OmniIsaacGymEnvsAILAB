@@ -11,7 +11,8 @@ from omniisaacgymenvs.tasks.base.rl_task import RLTask
 from omniisaacgymenvs.robots.articulations.ur5e_tool import UR5eTool
 from omniisaacgymenvs.robots.articulations.views.ur5e_view import UR5eView
 from omniisaacgymenvs.sensors.views.lidar_view import LidarView
-from omni.replicator.isaac.scripts.writers.pytorch_listener import PytorchListener
+from omni.isaac.range_sensor import _range_sensor
+from omni.isaac.sensor import RotatingLidarPhysX
 
 import omni
 from omni.isaac.core.prims import RigidPrimView
@@ -40,111 +41,11 @@ import copy
 # - get_states()
 # - calculate_metrics()
 # - is_done()
-# - get_extras()       
-TASK_CFG = {"test": False,
-            "device_id": 0,
-            "headless": True,
-            "sim_device": "gpu",
-            "enable_livestream": False,
-            "warp": False,
-            "seed": 42,
-            "task": {"name": "ReachingUR5e",
-                     "physics_engine": "physx",
-                     "env": {"numEnvs": 1024,
-                             "envSpacing": 1.5,
-                             "episodeLength": 200,
-                             "enableDebugVis": False,
-                             "clipObservations": 1000.0,
-                             "clipActions": 1.0,
-                             "controlFrequencyInv": 4,
-                             "actionScale": 2.5,
-                             "dofVelocityScale": 0.1,
-                             "controlSpace": "cartesian",
-                            #  "goal": [0.5, 0.3, 0.0125]},
-                             "goal": [0.5, 0.3, 0.0]},
-                     "sim": {"dt": 0.0083,  # 1 / 120
-                             "use_gpu_pipeline": True,
-                             "gravity": [0.0, 0.0, -9.81],
-                             "add_ground_plane": True,
-                             "use_flatcache": True,
-                             "enable_scene_query_support": True,    # for getting point cloud
-                            #  "enable_cameras": False,
-                             "enable_cameras": True,    # 231121 added BSH for PytorchListener
-                             "default_physics_material": {"static_friction": 1.0,
-                                                         "dynamic_friction": 1.0,
-                                                         "restitution": 0.0},
-                             "physx": {"worker_thread_count": 4,
-                                      "solver_type": 1,
-                                      "use_gpu": True,
-                                      "solver_position_iteration_count": 4,
-                                      "solver_velocity_iteration_count": 1,
-                                      "contact_offset": 0.005,
-                                      "rest_offset": 0.0,
-                                      "bounce_threshold_velocity": 0.2,
-                                      "friction_offset_threshold": 0.04,
-                                      "friction_correlation_distance": 0.025,
-                                      "enable_sleeping": True,
-                                      "enable_stabilization": True,
-                                      "max_depenetration_velocity": 1000.0,
-                                      "gpu_max_rigid_contact_count": 524288,
-                                      "gpu_max_rigid_patch_count": 33554432,
-                                      "gpu_found_lost_pairs_capacity": 524288,
-                                      "gpu_found_lost_aggregate_pairs_capacity": 262144,
-                                      "gpu_total_aggregate_pairs_capacity": 1048576,
-                                      "gpu_max_soft_body_contacts": 1048576,
-                                      "gpu_max_particle_contacts": 1048576,
-                                      "gpu_heap_capacity": 33554432,
-                                      "gpu_temp_buffer_capacity": 16777216,
-                                      "gpu_max_num_partitions": 8},
-                             "robot": {"override_usd_defaults": False,
-                                       "fixed_base": False,
-                                       "enable_self_collisions": True,
-                                       "enable_gyroscopic_forces": True,
-                                       "solver_position_iteration_count": 4,
-                                       "solver_velocity_iteration_count": 1,
-                                       "sleep_threshold": 0.005,
-                                       "stabilization_threshold": 0.001,
-                                       "density": 100,
-                                       "max_depenetration_velocity": 1000.0,
-                                       "contact_offset": 0.005,
-                                       "rest_offset": 0.0},
-                             "target": {"override_usd_defaults": False,
-                                        "make_kinematic": False,
-                                        "fixed_base": False,
-                                        # "fixed_base": True,
-                                        "enable_self_collisions": False,
-                                        "enable_gyroscopic_forces": True,
-                                        "solver_position_iteration_count": 4,
-                                        "solver_velocity_iteration_count": 1,
-                                        "sleep_threshold": 0.005,
-                                        "stabilization_threshold": 0.001,
-                                        # "density": -1,
-                                        "density": 10,
-                                        "max_depenetration_velocity": 1000.0,
-                                        "contact_offset": 0.005,
-                                        "rest_offset": 0.0},
-                             "goal": {"override_usd_defaults": False,
-                                      "make_kinematic": True,   # 이걸 넣어 주어야 goal이 움직이지 않음
-                                      "enable_self_collisions": False,
-                                      "enable_gyroscopic_forces": True,
-                                    #   "fixed_base": True,
-                                      "density": -1,
-                                    #   "max_depenetration_velocity": 1000.0,
-                                      },
-                            }
-                    }
-            }
+# - get_extras()    
+
 
 class MovingTargetTask(RLTask):
     def __init__(self, name, sim_config, env, offset=None) -> None:
-        #################### BSH
-        import omni.replicator.core as rep
-        self.rep = rep
-        self.camera_width = 640
-        self.camera_height = 480
-        self.pytorch_listener = PytorchListener
-        #################### BSH
-
         self.update_config(sim_config)
 
         self.step_num = 0
@@ -208,10 +109,10 @@ class MovingTargetTask(RLTask):
         self.get_robot()
         self.get_target()
         self.get_goal()
-        # self.get_lidar()
+        self.get_lidar(idx=0)
 
-        RLTask.set_up_scene(self, scene)
-        # super().set_up_scene(scene)
+        # RLTask.set_up_scene(self, scene)
+        super().set_up_scene(scene)
 
         # robot view
         self._robots = UR5eView(prim_paths_expr="/World/envs/.*/robot", name="robot_view")
@@ -228,44 +129,14 @@ class MovingTargetTask(RLTask):
         scene.add(self._targets)
         
         # point cloud view
+        
         # Used to interact with the LIDAR
-        self._point_cloud = {}
-        # self.lidarInterface = _range_sensor.acquire_lidar_sensor_interface() # Used to interact with the LIDAR
-        self._point_cloud[0] = LidarView(prim_paths=f"/World/envs/env_0/robot/lidar", name="lidar_view_0")
-        self._point_cloud[1] = LidarView(prim_paths=f"/World/envs/env_1/robot/lidar", name="lidar_view_1")
-        self._point_cloud[2] = LidarView(prim_paths=f"/World/envs/env_2/robot/lidar", name="lidar_view_2")
-        self._point_cloud[3] = LidarView(prim_paths=f"/World/envs/env_3/robot/lidar", name="lidar_view_3")
-
-        scene.add(self._point_cloud[0])
-        scene.add(self._point_cloud[1])
-        scene.add(self._point_cloud[2])
-        scene.add(self._point_cloud[3])
-
+        # self._point_cloud = LidarView(prim_paths=f"/World/envs/envs_0/lidar_0", name=f"lidar_view_0")
+        # scene.add(self._lidar)
+        # self._point_cloud = {}
         # for i in range(self._num_envs):
-        #     # self._lidars = LidarView(prim_paths_expr=f"/World/envs/.*/robot/lidar/lidar", name="lidar_view")
         #     self._point_cloud[i] = LidarView(prim_paths=f"/World/envs/env_{i}/robot/lidar/lidar", name=f"lidar_view_{i}")
-            
         #     scene.add(self._point_cloud[i])
-
-        ### 231121 added BSH
-        self.render_products = []
-        env_pos = self._env_pos.cpu()
-        for i in range(self._num_envs):
-            self.rep.create.stereo_camera
-            camera = self.rep.create.camera(
-                position=(-4.2 + env_pos[i][0], env_pos[i][1], 3.0), look_at=(env_pos[i][0], env_pos[i][1], 2.55))
-            render_product = self.rep.create.render_product(camera, resolution=(self.camera_width, self.camera_height))
-            self.render_products.append(render_product)
-
-        ### 231121 added BSH
-        # start replicator to capture image data
-        self.rep.orchestrator._orchestrator._is_started = True
-
-        # initialize pytorch writer for vectorized collection
-        self.pytorch_listener = PytorchListener
-        self.pytorch_writer = self.rep.WriterRegistry.get("PytorchWriter")
-        self.pytorch_writer.initialize(listener=self.pytorch_listener, device="cuda")
-        self.pytorch_writer.attach(self.render_products)
             
 
         # get tool semantic data
@@ -289,7 +160,7 @@ class MovingTargetTask(RLTask):
             self._target_semantics[i].GetSemanticDataAttr().Set(f"target_{i}")
 
         self.init_data()
-        return
+        # return
 
     def initialize_views(self, scene):
         super().initialize_views(scene)
@@ -354,9 +225,24 @@ class MovingTargetTask(RLTask):
                                                      get_prim_at_path(goal.prim_path),
                                                      self._sim_config.parse_actor_config("goal"))
     
-    def get_lidar(self):
+    def get_lidar(self, idx):
         # TODO: get lidar through code not from USD
-        return
+        self.lidarInterface = _range_sensor.acquire_lidar_sensor_interface()
+        self._lidar = RotatingLidarPhysX(prim_path=f"/World/envs/envs_{idx}/lidar_{idx}",
+                                         name=f"lidar_{idx}",
+                                         rotation_frequency=0.0,
+                                         position=[2, 0, 0],
+                                         fov=[100, 50],
+                                         resolution=[1, 1],
+                                         valid_range=[0.1, 1.0])
+        self._lidar.add_depth_data_to_frame()
+        self._lidar.add_point_cloud_data_to_frame()
+        self._lidar.add_semantics_data_to_frame()
+        self._lidar.enable_visualization(high_lod=True,
+                                         draw_points=True,
+                                         draw_lines=False)
+        self._lidar.initialize()
+        
 
     def init_data(self) -> None:
         self.robot_default_dof_pos = torch.tensor(np.radians([-40, -45, 60, -100, -90, 90.0,
@@ -463,13 +349,6 @@ class MovingTargetTask(RLTask):
         #     print("Semantics", np.unique(semantics))
         '''Consider async when train with multiple envs point cloud'''
 
-        ##### 231121 added BSH
-        # retrieve RGB data from all render products
-        # images = self.pytorch_listener.get_rgb_data()
-        # from torchvision.utils import save_image, make_grid
-        # img = images/255
-        # save_image(make_grid(img, nrows = 2), 'cartpole_export.png')
-
         robot_dof_pos = self._robots.get_joint_positions(clone=False)
         robot_dof_vel = self._robots.get_joint_velocities(clone=False)
         # print(f'\nrobot_dof_pos:\n{robot_dof_pos}\n')
@@ -479,11 +358,17 @@ class MovingTargetTask(RLTask):
         target_pos, target_rot = self._targets.get_local_poses()
         goal_pos, goal_rot = self._goals.get_local_poses()
 
+        # lidar_prim_path = self._point_cloud[0].prim_path
+        # point_cloud = self._point_cloud[0]._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
+
+        lidar_prim_path = self._lidar.prim_path
+        point_cloud = self._lidar._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
+
         # # TODO: get point cloud of the tool from lidar
         # for i in range(self._num_envs):
-            # lidar_prim_path = self._point_cloud[i].prim_path
-            # point_cloud = self._point_cloud[i]._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
-        #     semantic = self._point_cloud[i]._lidar_sensor_interface.get_semantic_data(lidar_prim_path)
+        #     lidar_prim_path = self._point_cloud[i].prim_path
+        #     point_cloud = self._point_cloud[i]._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
+        #     semantic = self._point_cloud[i]._lidar_sensor_interface.get_prim_data(lidar_prim_path)
 
         #     pcd = np.reshape(point_cloud, (point_cloud.shape[0]*point_cloud.shape[1], 3))
         #     pcd_semantic = np.reshape(semantic, -1)
@@ -633,12 +518,13 @@ class MovingTargetTask(RLTask):
         # # self._robots.get_joint_positions()
         # ##############################################################################################################
 
-        # # reset lidar
-        # self._lidars.add_depth_data_to_frame()
-        # self._lidars.add_point_cloud_data_to_frame()
-        # self._lidars.enable_visualization(high_lod=True,
+        # reset lidar #####################
+        # self._lidar.add_depth_data_to_frame()
+        # self._lidar.add_point_cloud_data_to_frame()
+        # self._lidar.enable_visualization(high_lod=True,
         #                                   draw_points=True,
         #                                   draw_lines=False)
+        # self._lidar.initialize()
 
         # reset target
         position = torch.tensor([0.50, -0.2, 0.15], device=self._device)
@@ -681,6 +567,8 @@ class MovingTargetTask(RLTask):
         self.robot_dof_targets = torch.zeros((self._num_envs, self.num_robot_dofs), dtype=torch.float, device=self._device)
         # self._targets.enable_rigid_body_physics()
         # self._targets.enable_gravities()
+
+
 
         # randomize all envs
         indices = torch.arange(self._num_envs, dtype=torch.int64, device=self._device)
