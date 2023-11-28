@@ -17,18 +17,6 @@ from skrl.utils import set_seed
 seed = 42
 set_seed(seed)  # e.g. `set_seed(42)` for fixed seed
 
-env = get_env_instance(headless=False)
-
-from omniisaacgymenvs.utils.config_utils.sim_config import SimConfig
-from omniisaacgymenvs.tasks.moving_target import MovingTargetTask, TASK_CFG
-# from omniisaacgymenvs.skrl_examples.moving_target_env import MovingTargetTask, TASK_CFG
-sim_config = SimConfig(TASK_CFG)
-
-
-# from moving_target import MovingTargetTask, TASK_CFG
-# from omniisaacgymenvs.tasks.moving_target import MovingTargetTask
-# import omniisaacgymenvs.cfg.task
-
 # define shared model (stochastic and deterministic models) using mixins
 class Shared(GaussianMixin, DeterministicMixin, Model):
     def __init__(self, observation_space, action_space, device, clip_actions=False,
@@ -61,18 +49,10 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
         elif role == "value":
             return self.value_layer(self.net(inputs["states"])), {}
 
-# TASK_CFG["task"]["env"]["numEnvs"] = 4096
-# TASK_CFG["task"]["env"]["numEnvs"] = 2048
-TASK_CFG["task"]["env"]["numEnvs"] = 4
-TASK_CFG["task"]["env"]["controlSpace"] = "cartesian"  # "joint" or "cartesian"
-TASK_CFG["seed"] = 42
-
-task = MovingTargetTask(name="MovingTarget", sim_config=sim_config, env=env)
-env.set_task(task=task, sim_params=sim_config.get_physics_params(), backend="torch", init_sim=True)
-env = wrap_env(env, "omniverse-isaacgym")
+env = load_omniverse_isaacgym_env(task_name="MovingTarget")
+env = wrap_env(env)
 
 device = env.device
-
 
 # instantiate a memory as rollout buffer (any memory can be used for this)
 memory = RandomMemory(memory_size=16, num_envs=env.num_envs, device=device)
