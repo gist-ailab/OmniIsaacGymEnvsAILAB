@@ -7,7 +7,7 @@ from omni.isaac.sensor import RotatingLidarPhysX
 class LidarView(RotatingLidarPhysX):
     def __init__(self,
                  prim_paths: str,
-                 name: Optional[str] = "LidarView") -> None:
+                 name: Optional[str] = "lidar") -> None:
         super().__init__(prim_paths, name,
                          rotation_frequency = 0.0,
                         #  fov=[70, 50],
@@ -29,3 +29,12 @@ class LidarView(RotatingLidarPhysX):
                                          draw_points=True,
                                          draw_lines=False)
         self._lidar.initialize()
+    
+    @property
+    def lidar(self) -> RotatingLidarPhysX:
+        """[summary]
+
+        Returns:
+            RotatingLidarPhysX: [description]
+        """
+        return self._lidar
