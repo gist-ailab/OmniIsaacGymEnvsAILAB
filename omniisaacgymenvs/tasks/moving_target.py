@@ -109,7 +109,7 @@ class MovingTargetTask(RLTask):
         self.get_robot()
         self.get_target()
         self.get_goal()
-        self.get_lidar(idx=0)
+        # self.get_lidar(idx=0, scene=scene)
 
         # RLTask.set_up_scene(self, scene)
         super().set_up_scene(scene)
@@ -128,8 +128,43 @@ class MovingTargetTask(RLTask):
         scene.add(self._flanges)
         scene.add(self._targets)
         
+        
         # point cloud view
         
+        self.lidarInterface = _range_sensor.acquire_lidar_sensor_interface()
+        # self._lidar = scene.add(
+        #     RotatingLidarPhysX(prim_path=f"/World/envs/envs_0/lidar_0",
+        #                                  name=f"lidar_0",
+        #                                  rotation_frequency=0.0,
+        #                                  position=[2, 0, 0],
+        #                                  fov=[100, 50],
+        #                                  resolution=[1, 1],
+        #                                  valid_range=[0.1, 1.0])
+        # )
+
+        self._lidar = RotatingLidarPhysX(prim_path=f"/World/envs/envs_0/lidar_0",
+                                         name=f"lidar_0",
+                                         rotation_frequency=0.0,
+                                         position=[2, 0, 0],
+                                         fov=[100, 50],
+                                         resolution=[1, 1],
+                                         valid_range=[0.1, 1.0])
+        scene.add(self._lidar)
+        self._lidar.enable_semantics()
+
+        
+        
+        # self._lidar.add_depth_data_to_frame()
+        # self._lidar.add_point_cloud_data_to_frame()
+        # self._lidar.add_semantics_data_to_frame()
+        # self._lidar.enable_visualization(high_lod=True,
+        #                                  draw_points=True,
+        #                                  draw_lines=False)
+
+
+
+
+
         # Used to interact with the LIDAR
         # self._point_cloud = LidarView(prim_paths=f"/World/envs/envs_0/lidar_0", name=f"lidar_view_0")
         # scene.add(self._lidar)
@@ -225,7 +260,7 @@ class MovingTargetTask(RLTask):
                                                      get_prim_at_path(goal.prim_path),
                                                      self._sim_config.parse_actor_config("goal"))
     
-    def get_lidar(self, idx):
+    def get_lidar(self, idx, scence):
         # TODO: get lidar through code not from USD
         self.lidarInterface = _range_sensor.acquire_lidar_sensor_interface()
         self._lidar = RotatingLidarPhysX(prim_path=f"/World/envs/envs_{idx}/lidar_{idx}",
@@ -235,6 +270,7 @@ class MovingTargetTask(RLTask):
                                          fov=[100, 50],
                                          resolution=[1, 1],
                                          valid_range=[0.1, 1.0])
+        
         self._lidar.add_depth_data_to_frame()
         self._lidar.add_point_cloud_data_to_frame()
         self._lidar.add_semantics_data_to_frame()
