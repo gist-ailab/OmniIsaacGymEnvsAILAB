@@ -13,41 +13,11 @@ from skrl.resources.schedulers.torch import KLAdaptiveRL
 from skrl.trainers.torch import SequentialTrainer
 from skrl.utils import set_seed
 
+from omniisaacgymenvs.model.shared import Shared
+
 # seed for reproducibility
 seed = 42
 set_seed(seed)  # e.g. `set_seed(42)` for fixed seed
-
-# define shared model (stochastic and deterministic models) using mixins
-class Shared(GaussianMixin, DeterministicMixin, Model):
-    def __init__(self, observation_space, action_space, device, clip_actions=False,
-                 clip_log_std=True, min_log_std=-20, max_log_std=2, reduction="sum"):
-        Model.__init__(self, observation_space, action_space, device)
-        GaussianMixin.__init__(self, clip_actions, clip_log_std, min_log_std, max_log_std, reduction)
-        DeterministicMixin.__init__(self, clip_actions)
-
-        self.net = nn.Sequential(nn.Linear(self.num_observations, 256),
-                                 nn.ELU(),
-                                 nn.Linear(256, 128),
-                                 nn.ELU(),
-                                 nn.Linear(128, 64),
-                                 nn.ELU())
-
-        self.mean_layer = nn.Linear(64, self.num_actions)
-        self.log_std_parameter = nn.Parameter(torch.zeros(self.num_actions))
-
-        self.value_layer = nn.Linear(64, 1)
-
-    def act(self, inputs, role):
-        if role == "policy":
-            return GaussianMixin.act(self, inputs, role)
-        elif role == "value":
-            return DeterministicMixin.act(self, inputs, role)
-
-    def compute(self, inputs, role):
-        if role == "policy":
-            return self.mean_layer(self.net(inputs["states"])), self.log_std_parameter, {}
-        elif role == "value":
-            return self.value_layer(self.net(inputs["states"])), {}
 
 env = load_omniverse_isaacgym_env(task_name="MovingTarget")
 env = wrap_env(env)
