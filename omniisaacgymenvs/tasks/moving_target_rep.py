@@ -50,7 +50,7 @@ class MovingTargetTask(RLTask):
         #################### BSH
         self.rep = rep
         self.camera_width = 640
-        self.camera_height = 480
+        self.camera_height = 640
         self.pytorch_listener = PytorchListener
         #################### BSH
 
@@ -98,12 +98,6 @@ class MovingTargetTask(RLTask):
         #     np.ones((self.camera_width, self.camera_height, 3), dtype=np.float32) * np.Inf)
         # ############################################################ BSH
         
-        # TODO: 상속받는 RLTask에서 기본 제공되는 PytorchWriter와 PytorchListener를 쓰고 있는데, 내가 만든 class를 써야할듯
-        '''
-        PytorchWriter => PointcloudWriter
-        PytorchListener => PointcloudListener
-        로 수정해보자.
-        '''
         self.PointcloudWriter = PointcloudWriter
         self.PointcloudListener = PointcloudListener
         
@@ -162,9 +156,63 @@ class MovingTargetTask(RLTask):
         # Used to get depth data from the camera
         for i in range(self._num_envs):
             self.rep.get.camera()
+            # Get the parameters of the camera via links below
+            # https://learn.microsoft.com/en-us/answers/questions/201906/pixel-size-of-rgb-and-tof-camera#:~:text=Pixel%20Size%20for,is%20~2.3%20mm
+            # https://docs.omniverse.nvidia.com/isaacsim/latest/features/sensors_simulation/isaac_sim_sensors_camera.html#calibrated-camera-sensors
+            '''
+            Azure Kinect DK
+            [Depth Camera]
+            focal_length = 0.18 (cm)
+            focus_distance = 3.86 (m) 그런데 clipping range가 있는데 이게 어떻게 작용할지 불확실함
+            horizontal_aperture = 0.224 (cm)
+            vertical_aperture = 0.2016 (cm)
+            clipping_range = 0.5 ~ 3.86 (m)
+            위 값을 RGB로 가시화 하면 이상하긴 한데, depth camera 니까 우선 해보자.
+            
+            여기 보면 또 mm임..
+            https://docs.omniverse.nvidia.com/isaacsim/latest/manual_replicator_composer_parameter_list.html#camera-lens
+            
+
+            [RGB Camera]
+            focal_length = 0.23 (cm)
+            focus_distance = 5 (m) 그런데 clipping range가 있는데 이게 어떻게 작용할지 불확실함
+            horizontal_aperture = 0.24 (cm)
+            vertical_aperture = 0.135 (cm)
+            clipping_range = 0.01 ~ 10 (m)
+            '''
             camera = self.rep.create.camera(
-                position=(-4.2 + env_pos[i][0], env_pos[i][1], 3.0), look_at=(env_pos[i][0], env_pos[i][1], 2.55),
+                # position=(0.5 + env_pos[i][0], 1.5 + env_pos[i][1], 0.4),
+                position=(3 + env_pos[i][0], 1.5 + env_pos[i][1], 0.5),
+                # position=(0.5 + env_pos[i][0], 0.75 + env_pos[i][1], 0.4),
+                # position=(0.35 + env_pos[i][0], 0.5 + env_pos[i][1], 0.4),
+                # rotation=(0, -9, 90),
+                rotation=(0, -9, 60),
+
+                # focal_length=0.18,
+                # focus_distance=3.86,
+                # horizontal_aperture=0.224,
+                # # vertical_aperture=0.2016,
+                # clipping_range=(0.5, 3.86),
+
+                # focal_length=0.18,
+                # focus_distance=3.86,
+                # horizontal_aperture=0.224,
+                # # vertical_aperture=0.2016,
+                # clipping_range=(0.5, 3.86),
+
+                focal_length=1.8,
+                focus_distance=3.86,
+                horizontal_aperture=2.24,
+                # vertical_aperture=0.2016,
+                clipping_range=(0.5, 3.86),
+                
+                # focal_length=0.23,
+                # focus_distance=5,
+                # horizontal_aperture=0.24,
+                # # vertical_aperture=0.135,
+                # clipping_range=(0.01, 10),
                 )
+            # TODO: camera parameter를 알맞게 입력해야 함.
             render_product = self.rep.create.render_product(camera, resolution=(self.camera_width, self.camera_height))
             rgb_product = self.rep.create.render_product(camera, resolution=(self.camera_width, self.camera_height))
             # distance_to_camera = self.rep.AnnotatorRegistry.get_annotator("distance_to_camera")
@@ -198,6 +246,17 @@ class MovingTargetTask(RLTask):
         self.pytorch_writer.attach(self.rgb_products)
         ################################################################################## 231121 added BSH
             
+        # get target object semantic data
+        # 그런데 어짜피 로봇 point cloud는 필요 없기 때문에 안 받아도 될듯
+        self._robot_semantics = {}
+        for i in range(self._num_envs):
+            robot_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/robot")
+            self._robot_semantics[i] = Semantics.SemanticsAPI.Apply(robot_prim, "Semantics")
+            self._robot_semantics[i].CreateSemanticTypeAttr()
+            self._robot_semantics[i].CreateSemanticDataAttr()
+            self._robot_semantics[i].GetSemanticTypeAttr().Set("class")
+            self._robot_semantics[i].GetSemanticDataAttr().Set(f"robot_{i}")
+
 
         # get tool semantic data
         self._tool_semantics = {}
@@ -389,11 +448,11 @@ class MovingTargetTask(RLTask):
         images = self.pytorch_listener.get_rgb_data()
         pointcloud = self.pointcloud_listener.get_pointcloud_data()
         
-        if images is not None:
-            from torchvision.utils import save_image, make_grid
+        # if images is not None:
+        #     from torchvision.utils import save_image, make_grid
 
-            img = images/255
-            save_image(make_grid(img, nrows = 2), 'moving_target.png')
+        #     img = images/255
+        #     save_image(make_grid(img, nrows = 2), 'moving_target.png')
 
         robot_dof_pos = self._robots.get_joint_positions(clone=False)
         robot_dof_vel = self._robots.get_joint_velocities(clone=False)
@@ -405,10 +464,16 @@ class MovingTargetTask(RLTask):
         goal_pos, goal_rot = self._goals.get_local_poses()
 
 
+        # point_cloud = pointcloud['env_0']['data']
+        # o3d_point_cloud = o3d.geometry.PointCloud()
+        # o3d_point_cloud.points = o3d.utility.Vector3dVector(point_cloud)
+        # o3d.visualization.draw_geometries([o3d_point_cloud],
+        #                                   window_name='point cloud')
+
+
         # # TODO: get point cloud of the tool from lidar
         # for i in range(self._num_envs):
-        #     lidar_prim_path = self._point_cloud[i].prim_path
-        #     point_cloud = self._point_cloud[i]._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
+        #     point_cloud = pointcloud[f'env_{i}']['data']
         #     semantic = self._point_cloud[i]._lidar_sensor_interface.get_prim_data(lidar_prim_path)
 
         #     pcd = np.reshape(point_cloud, (point_cloud.shape[0]*point_cloud.shape[1], 3))
