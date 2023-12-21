@@ -6,7 +6,7 @@ physics_engine: ${..physics_engine}
 # if given, will override the device setting in gym. 
 env:
   # numEnvs: ${resolve_default:4096,${...num_envs}}
-  numEnvs: ${resolve_default:4,${...num_envs}}
+  numEnvs: ${resolve_default:2,${...num_envs}}
   envSpacing: 3.0
   episodeLength: 500
   enableDebugVis: False
@@ -35,6 +35,8 @@ env:
   # actionPenaltyScale: 0.01
   # fingerCloseRewardScale: 10.0
 
+  cameraType: "depth"
+
 sim:
   dt: 0.0083 # 1/120 s
   use_gpu_pipeline: ${eq:${...pipeline},"gpu"}
@@ -46,8 +48,8 @@ sim:
   disable_contact_processing: False
 
   # set to True if you use camera sensors in the environment
-  enable_cameras: False   # 231121 added BSH for PytorchListener
-  # enable_cameras: True
+  # enable_cameras: False
+  enable_cameras: True  # 231121 added BSH for PytorchListener
 
   default_physics_material:
     static_friction: 1.0
