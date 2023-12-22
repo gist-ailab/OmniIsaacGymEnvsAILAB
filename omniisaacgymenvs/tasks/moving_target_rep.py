@@ -463,12 +463,27 @@ class MovingTargetTask(RLTask):
         target_pos, target_rot = self._targets.get_local_poses()
         goal_pos, goal_rot = self._goals.get_local_poses()
 
+        point_cloud_data = pointcloud['env_0']['data']
 
-        # point_cloud = pointcloud['env_0']['data']
-        # o3d_point_cloud = o3d.geometry.PointCloud()
-        # o3d_point_cloud.points = o3d.utility.Vector3dVector(point_cloud)
-        # o3d.visualization.draw_geometries([o3d_point_cloud],
-        #                                   window_name='point cloud')
+
+        v3d = o3d.utility.Vector3dVector
+
+        # get original point cloud
+        o3d_org_point_cloud = o3d.geometry.PointCloud()
+        o3d_org_point_cloud.points = v3d(point_cloud_data)
+        o3d.visualization.draw_geometries([o3d_org_point_cloud],
+                                          window_name='origial_point cloud')
+
+        # get sampled point cloud
+        target_radius = np.linalg.norm(point_cloud_data.max(0) - point_cloud_data.min(0)) * 0.02
+        idx = pcu.downsample_point_cloud_poisson_disk(point_cloud_data,
+                                                      target_num_samples=int(0.3*point_cloud_data.shape[0]),
+                                                      radius=target_radius)
+        point_cloud_data_sampled = point_cloud_data[idx]
+        sampled_pcd = o3d.geometry.PointCloud()
+        sampled_pcd.points = v3d(point_cloud_data_sampled)
+        o3d.visualization.draw_geometries([sampled_pcd],
+                                          window_name='sampled point cloud')
 
 
         # # TODO: get point cloud of the tool from lidar
@@ -534,13 +549,9 @@ class MovingTargetTask(RLTask):
         self.obs_buf[:, 0] = self.progress_buf / self._max_episode_length
         self.obs_buf[:, 1:7] = dof_pos_scaled[:, :6]
         self.obs_buf[:, 7:13] = dof_vel_scaled[:, :6] * generalization_noise
-        # self.obs_buf[:, 13:16] = target_pos - self._env_pos
-        # self.obs_buf[:, 16:19] = goal_pos - self._env_pos
         self.obs_buf[:, 13:16] = flange_pos
         self.obs_buf[:, 16:19] = target_pos
         self.obs_buf[:, 19:22] = goal_pos
-        # self.obs_buf[:, 22] = self.current_tool_target_distance
-        # self.obs_buf[:, 23] = self.current_target_goal_distance
         
         # self._env_pos is the position of the each environment. It comse from RLTask.
 
