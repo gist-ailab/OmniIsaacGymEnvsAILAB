@@ -80,8 +80,11 @@ class MovingTargetTask(RLTask):
         # observation and action space
         # self._num_observations = 16
         # self._num_observations = 19
-        self._num_observations = 22
         # self._num_observations = 24
+        # self._num_observations = 22
+        self._num_observations = 100    # number of sample point cloud
+
+
         if self._control_space == "joint":
             self._num_actions = 6
         elif self._control_space == "cartesian":
@@ -464,26 +467,31 @@ class MovingTargetTask(RLTask):
         goal_pos, goal_rot = self._goals.get_local_poses()
 
         point_cloud_data = pointcloud['env_0']['data']
+        a = [pointcloud[pcd]['data'] for pcd in pointcloud]
+        # for문 내포 같은걸 이용하여 tensor로 만들어야 함. 아무튼 for문 사용은 안됨
+        
 
 
-        v3d = o3d.utility.Vector3dVector
+        # ############# visualize point cloud #################
+        # point_cloud_data = pointcloud['env_0']['data']
+        # v3d = o3d.utility.Vector3dVector
+        # # get original point cloud
+        # o3d_org_point_cloud = o3d.geometry.PointCloud()
+        # o3d_org_point_cloud.points = v3d(point_cloud_data)
+        # o3d.visualization.draw_geometries([o3d_org_point_cloud],
+        #                                   window_name='origial_point cloud')
 
-        # get original point cloud
-        o3d_org_point_cloud = o3d.geometry.PointCloud()
-        o3d_org_point_cloud.points = v3d(point_cloud_data)
-        o3d.visualization.draw_geometries([o3d_org_point_cloud],
-                                          window_name='origial_point cloud')
-
-        # get sampled point cloud
-        target_radius = np.linalg.norm(point_cloud_data.max(0) - point_cloud_data.min(0)) * 0.02
-        idx = pcu.downsample_point_cloud_poisson_disk(point_cloud_data,
-                                                      target_num_samples=int(0.3*point_cloud_data.shape[0]),
-                                                      radius=target_radius)
-        point_cloud_data_sampled = point_cloud_data[idx]
-        sampled_pcd = o3d.geometry.PointCloud()
-        sampled_pcd.points = v3d(point_cloud_data_sampled)
-        o3d.visualization.draw_geometries([sampled_pcd],
-                                          window_name='sampled point cloud')
+        # # get sampled point cloud
+        # target_radius = np.linalg.norm(point_cloud_data.max(0) - point_cloud_data.min(0)) * 0.02
+        # idx = pcu.downsample_point_cloud_poisson_disk(point_cloud_data,
+        #                                               target_num_samples=int(0.3*point_cloud_data.shape[0]),
+        #                                               radius=target_radius)
+        # point_cloud_data_sampled = point_cloud_data[idx]
+        # sampled_pcd = o3d.geometry.PointCloud()
+        # sampled_pcd.points = v3d(point_cloud_data_sampled)
+        # o3d.visualization.draw_geometries([sampled_pcd],
+        #                                   window_name='sampled point cloud')
+        # ############# visualize point cloud #################
 
 
         # # TODO: get point cloud of the tool from lidar
@@ -546,7 +554,11 @@ class MovingTargetTask(RLTask):
 
         generalization_noise = torch.rand((dof_vel_scaled.shape[0], 6), device=self._device) + 0.5
 
+
+        # make new obs_buf into different dimension for point cloud
+        self.obs_buf = torch.zeros((self._num_envs, self.num_observations, 3), device=self._device, dtype=torch.float)
         self.obs_buf[:, 0] = self.progress_buf / self._max_episode_length
+        # 위에 있는게 꼭 들어가야 할까???
         self.obs_buf[:, 1:7] = dof_pos_scaled[:, :6]
         self.obs_buf[:, 7:13] = dof_vel_scaled[:, :6] * generalization_noise
         self.obs_buf[:, 13:16] = flange_pos
