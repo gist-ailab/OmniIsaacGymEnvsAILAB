@@ -13,7 +13,8 @@ from skrl.resources.schedulers.torch import KLAdaptiveRL
 from skrl.trainers.torch import SequentialTrainer
 from skrl.utils import set_seed
 
-from omniisaacgymenvs.model.shared import Shared
+from omniisaacgymenvs.model.transformer_enc import SharedTransformerEnc
+# from omniisaacgymenvs.model.shared import Shared
 
 # seed for reproducibility
 seed = 42
@@ -32,7 +33,7 @@ memory = RandomMemory(memory_size=16, num_envs=env.num_envs, device=device)
 # PPO requires 2 models, visit its documentation for more details
 # https://skrl.readthedocs.io/en/latest/api/agents/ppo.html#models
 models = {}
-models["policy"] = Shared(env.observation_space, env.action_space, device)
+models["policy"] = SharedTransformerEnc(env.observation_space, env.action_space, device)
 models["value"] = models["policy"]  # same instance: shared model
 
 
