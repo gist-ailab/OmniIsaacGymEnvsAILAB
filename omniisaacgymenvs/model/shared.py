@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 from skrl.models.torch import DeterministicMixin, GaussianMixin, Model
 
-
 # define shared model (stochastic and deterministic models) using mixins
 class Shared(GaussianMixin, DeterministicMixin, Model):
     def __init__(self, observation_space, action_space, device, clip_actions=False,
