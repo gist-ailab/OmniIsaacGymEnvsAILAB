@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+import gym
+import numpy as np
 
 # import the skrl components to build the RL system
 from skrl.agents.torch.ppo import PPO, PPO_DEFAULT_CONFIG
@@ -21,7 +23,9 @@ seed = 42
 set_seed(seed)  # e.g. `set_seed(42)` for fixed seed
 
 env = load_omniverse_isaacgym_env(task_name="MovingTarget")
+env.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(env.observation_space.shape[0],3), dtype=np.float32)
 env = wrap_env(env)
+
 
 device = env.device
 
@@ -58,10 +62,16 @@ cfg["entropy_loss_scale"] = 0.0
 cfg["value_loss_scale"] = 2.0
 cfg["kl_threshold"] = 0
 cfg["rewards_shaper"] = lambda rewards, timestep, timesteps: rewards * 0.01
-cfg["state_preprocessor"] = RunningStandardScaler
-cfg["state_preprocessor_kwargs"] = {"size": env.observation_space, "device": device}
-cfg["value_preprocessor"] = RunningStandardScaler
-cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
+'''
+https://skrl.readthedocs.io/en/develop/api/resources/preprocessors/running_standard_scaler.html
+https://skrl.readthedocs.io/en/develop/intro/getting_started.html#preprocessors
+Preprocessor가 필요할 경우, 위의 `RunningStandardScaler`를 참고하여 pcd에 대한 preprocessor을 수행해봐도 될 것 같다.
+'''
+# cfg["state_preprocessor"] = RunningStandardScaler   # 이 preprocessor는 pointcloud랑 맞진 않는다. 필요하면 나는 별도로 구성해야 할듯.
+# cfg["state_preprocessor_kwargs"] = {"size": env.observation_space, "device": device}
+# cfg["value_preprocessor"] = RunningStandardScaler
+# cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
+
 # logging to TensorBoard and write checkpoints (in timesteps)
 cfg["experiment"]["write_interval"] = 120
 cfg["experiment"]["checkpoint_interval"] = 1200
