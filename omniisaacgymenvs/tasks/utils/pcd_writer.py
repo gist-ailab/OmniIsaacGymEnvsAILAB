@@ -17,48 +17,8 @@ from omniisaacgymenvs.tasks.utils.pcd_listener import PointcloudListener
 
 import os
 import open3d as o3d
-
-# class PointcloudListener:
-#     """A Observer/Listener that keeps track of updated data sent by the writer. Is passed in the
-#     initialization of a PytorchWriter at which point it is pinged by the writer after any data is
-#     passed to the writer."""
-
-#     def __init__(self):
-#         self.data = {}
-
-#     def write_data(self, data: dict) -> None:
-#         """Updates the existing data in the listener with the new data provided.
-
-#         Args:
-#             data (dict): new data retrieved from writer.
-#         """
-
-#         self.data.update(data)
-
-#     def get_rgb_data(self) -> Optional[torch.Tensor]:
-#         """Returns RGB data as a batched tensor from the current data stored.
-
-#         Returns:
-#             images (Optional[torch.Tensor]): images in batched pytorch tensor form
-#         """
-
-#         if "pytorch_rgb" in self.data:
-#             images = self.data["pytorch_rgb"]
-#             images = images[..., :3]
-#             images = images.permute(0, 3, 1, 2)
-#             return images
-#         else:
-#             return None
-
-#     def get_pointcloud_data(self) -> Optional[torch.Tensor]:
-#         if "pointcloud" in self.data:
-#             pcd = self.data["pointcloud_data"]
-#             # depth = depth[..., :3]
-#             # depth = depth.permute(0, 3, 1, 2)
-#             return pcd
-#         else:
-#             return None
-
+import numpy as np
+import point_cloud_utils as pcu
 
 class PointcloudWriter(Writer):
     """A custom writer that uses omni.replicator API to retrieve RGB data via render products
@@ -74,7 +34,10 @@ class PointcloudWriter(Writer):
                       other format that pytorch supports for devices. Default is "cuda".
     """
 
-    def __init__(self, listener: PointcloudListener, output_dir: str = None, device: str = "cuda"):
+    def __init__(self, listener: PointcloudListener,
+                 output_dir: str = None,
+                 num_observations: int = 100,
+                 device: str = "cuda"):
         # If output directory is specified, writer will write annotated data to the given directory
         if output_dir:
             self.backend = BackendDispatch({"paths": {"out_dir": output_dir}})
@@ -84,10 +47,9 @@ class PointcloudWriter(Writer):
             self._output_dir = None
         self._frame_id = 0
 
-        # self.annotators = [AnnotatorRegistry.get_annotator("LdrColor", device="cuda", do_array_copy=False),
-        #                    AnnotatorRegistry.get_annotator("pointcloud")]
         self.annotators = [AnnotatorRegistry.get_annotator("pointcloud")]
         self.listener = listener
+        self.num_observations = num_observations
         self.device = device
 
     def write(self, data: dict) -> None:
@@ -158,29 +120,32 @@ class PointcloudWriter(Writer):
         if data is None:
             raise Exception("Data is Null")
 
-        data_tensors = []
-        pcd_data = dict()
+        # TODO: for문 말고 matrix화 시킬 수 있다면 한번 시도를....
+        num_samples = self.num_observations
+        v3d = o3d.utility.Vector3dVector
+        o3d_org_point_cloud = o3d.geometry.PointCloud()
         for annotator in data.keys():
             if annotator.startswith("pointcloud"):
                 if len(annotator.split('_'))==2:
                     idx = f'env_{0}'
                 elif len(annotator.split('_'))==3:
                     idx = f'env_{int(annotator.split("_")[-1])}'
-                
-                pcd = data[annotator]
-                pcd_data[idx] = pcd
 
-                # ### 아래 주석은 point cloud를 tensor로 바꾸고 싶을 때 사용
-                # pcd_np = data[annotator]['data']
-                # pcd_tensor = torch.from_numpy(pcd_np).unsqueeze(0)
-                # data_tensors.append(pcd_tensor)
+                pcd_np = data[annotator]['data']    # get point cloud data as numpy array
 
-        # Move all tensors to the same device for concatenation
-        # device = "cuda:0" if self.device == "cuda" else self.device
-        # data_tensors = [t.to(device) for t in data_tensors]
-        # data_tensor = torch.cat(data_tensors, dim=0)
-        # return data_tensor
-        return pcd_data
+                # sampling point cloud for making same size
+                o3d_org_point_cloud.points = v3d(pcd_np)
+                o3d_downsampled_pcd = o3d_org_point_cloud.farthest_point_down_sample(num_samples)
+                pcd_sampled = np.asarray(o3d_downsampled_pcd.points)
+
+                pcd_tensor = torch.from_numpy(pcd_sampled).unsqueeze(0).to(self.device)
+
+                if int(idx.split('_')[-1]) == 0:
+                    pcd_tensors = pcd_tensor
+                else:
+                    pcd_tensors = torch.cat((pcd_tensors, pcd_tensor), dim=0)
+
+        return pcd_tensors
 
 
 # WriterRegistry.register(PointcloudWriter)
