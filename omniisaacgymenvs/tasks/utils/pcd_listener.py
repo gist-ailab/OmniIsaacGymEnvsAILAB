@@ -16,7 +16,8 @@ class PointcloudListener:
     passed to the writer."""
 
     def __init__(self):
-        self.data = {}
+        # self.data = {}
+        self.data = torch.Tensor()
 
     def write_data(self, data: dict) -> None:
         """Updates the existing data in the listener with the new data provided.
@@ -25,22 +26,23 @@ class PointcloudListener:
             data (dict): new data retrieved from writer.
         """
 
-        self.data.update(data)
+        # self.data.update(data)
+        self.data = data
 
-    def get_rgb_data(self) -> Optional[torch.Tensor]:
-        """Returns RGB data as a batched tensor from the current data stored.
+    # def get_rgb_data(self) -> Optional[torch.Tensor]:
+    #     """Returns RGB data as a batched tensor from the current data stored.
 
-        Returns:
-            images (Optional[torch.Tensor]): images in batched pytorch tensor form
-        """
+    #     Returns:
+    #         images (Optional[torch.Tensor]): images in batched pytorch tensor form
+    #     """
 
-        if "pytorch_rgb" in self.data:
-            images = self.data["pytorch_rgb"]
-            images = images[..., :3]
-            images = images.permute(0, 3, 1, 2)
-            return images
-        else:
-            return None
+    #     if "pytorch_rgb" in self.data:
+    #         images = self.data["pytorch_rgb"]
+    #         images = images[..., :3]
+    #         images = images.permute(0, 3, 1, 2)
+    #         return images
+    #     else:
+    #         return None
 
     def get_pointcloud_data(self) -> Optional[torch.Tensor]:
         if self.data is None:
