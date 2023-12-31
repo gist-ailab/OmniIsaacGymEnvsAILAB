@@ -82,7 +82,7 @@ class MovingTargetTask(RLTask):
         # self._num_observations = 19
         # self._num_observations = 24
         # self._num_observations = 22
-        self._num_observations = 100    # number of sample point cloud
+        self._num_observations = 150    # number of sample point cloud
 
 
         if self._control_space == "joint":
@@ -222,7 +222,6 @@ class MovingTargetTask(RLTask):
             # distance_to_image_plane = self.rep.AnnotatorRegistry.get_annotator("distance_to_image_plane")
             # pointcloud = self.rep.AnnotatorRegistry.get_annotator("pointcloud")
 
-            # self.render_products.append(render_product)
             self.render_products.append(render_product)
             self.rgb_products.append(rgb_product)
 
@@ -232,21 +231,19 @@ class MovingTargetTask(RLTask):
         self.rep.orchestrator._orchestrator._is_started = True
 
         # initialize pytorch writer for vectorized collection
+        # self.pytorch_listener = self.PytorchListener()
+        # self.pytorch_writer = self.rep.WriterRegistry.get("PytorchWriter")
+        # self.pytorch_writer.initialize(listener=self.pytorch_listener,
+        #                                 device="cuda",
+        #                                 )
+        # self.pytorch_writer.attach(self.rgb_products)
         self.pointcloud_listener = self.PointcloudListener()
-        self.pytorch_listener = self.PytorchListener()
         self.pointcloud_writer = self.rep.WriterRegistry.get("PointcloudWriter")
-        self.pytorch_writer = self.rep.WriterRegistry.get("PytorchWriter")
         self.pointcloud_writer.initialize(listener=self.pointcloud_listener,
-                                       device="cuda",
-                                    #    pointcloud=True,
-                                       )
-        self.pytorch_writer.initialize(listener=self.pytorch_listener,
-                                        device="cuda",
-                                        )
-
-        # TODO: PytorchLisner를 내가 따로 만들고, initialize할 때 pointcloud=True로 해서 point cloud를 받아오게 해야함
+                                          num_observations=self._num_observations,
+                                          device="cuda",
+                                          )
         self.pointcloud_writer.attach(self.render_products)
-        self.pytorch_writer.attach(self.rgb_products)
         ################################################################################## 231121 added BSH
             
         # get target object semantic data
@@ -448,7 +445,9 @@ class MovingTargetTask(RLTask):
 
         ##### 231121 added BSH
         # retrieve RGB data from all render products
-        images = self.pytorch_listener.get_rgb_data()
+        # images = self.pytorch_listener.get_rgb_data()
+        ''' retrieve point cloud data from all render products '''
+        # tasks/utils/pcd_writer.py 에서 pcd sample하고 tensor로 변환해서 가져옴
         pointcloud = self.pointcloud_listener.get_pointcloud_data()
         
         # if images is not None:
@@ -466,9 +465,6 @@ class MovingTargetTask(RLTask):
         target_pos, target_rot = self._targets.get_local_poses()
         goal_pos, goal_rot = self._goals.get_local_poses()
 
-        point_cloud_data = pointcloud['env_0']['data']
-        a = [pointcloud[pcd]['data'] for pcd in pointcloud]
-        # for문 내포 같은걸 이용하여 tensor로 만들어야 함. 아무튼 for문 사용은 안됨
         
 
 
@@ -481,7 +477,7 @@ class MovingTargetTask(RLTask):
         # o3d.visualization.draw_geometries([o3d_org_point_cloud],
         #                                   window_name='origial_point cloud')
 
-        # # get sampled point cloud
+        '''get sampled point cloud'''
         # target_radius = np.linalg.norm(point_cloud_data.max(0) - point_cloud_data.min(0)) * 0.02
         # idx = pcu.downsample_point_cloud_poisson_disk(point_cloud_data,
         #                                               target_num_samples=int(0.3*point_cloud_data.shape[0]),
@@ -556,14 +552,18 @@ class MovingTargetTask(RLTask):
 
 
         # make new obs_buf into different dimension for point cloud
+        # it originally define at RLTask
         self.obs_buf = torch.zeros((self._num_envs, self.num_observations, 3), device=self._device, dtype=torch.float)
-        self.obs_buf[:, 0] = self.progress_buf / self._max_episode_length
-        # 위에 있는게 꼭 들어가야 할까???
-        self.obs_buf[:, 1:7] = dof_pos_scaled[:, :6]
-        self.obs_buf[:, 7:13] = dof_vel_scaled[:, :6] * generalization_noise
-        self.obs_buf[:, 13:16] = flange_pos
-        self.obs_buf[:, 16:19] = target_pos
-        self.obs_buf[:, 19:22] = goal_pos
+        self.obs_buf = pointcloud
+        # TODO: pointcloud feature는 차원은 1차원 벡터로 해야하나...?
+        
+        # self.obs_buf[:, 0] = self.progress_buf / self._max_episode_length
+        # # 위에 있는게 꼭 들어가야 할까??? 없어도 될 것 같은데....
+        # self.obs_buf[:, 1:7] = dof_pos_scaled[:, :6]
+        # self.obs_buf[:, 7:13] = dof_vel_scaled[:, :6] * generalization_noise
+        # self.obs_buf[:, 13:16] = flange_pos
+        # self.obs_buf[:, 16:19] = target_pos
+        # self.obs_buf[:, 19:22] = goal_pos
         
         # self._env_pos is the position of the each environment. It comse from RLTask.
 
