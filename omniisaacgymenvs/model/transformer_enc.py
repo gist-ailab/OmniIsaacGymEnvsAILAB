@@ -18,6 +18,7 @@ class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
                                  nn.ELU(),
                                  nn.Linear(128, 64),
                                  nn.ELU())
+        # TODO: self.net을 Transformer encoder로 바꿔야 한다. 출력 차원은 
 
         self.mean_layer = nn.Linear(64, self.num_actions)
         self.log_std_parameter = nn.Parameter(torch.zeros(self.num_actions))
@@ -27,6 +28,7 @@ class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
     def act(self, inputs, role):
         if role == "policy":
             return GaussianMixin.act(self, inputs, role)
+        # TODO: 여기에서는 point2를 통해 만든 feature를 받아서, 그것을 shared model에 넣어서 action을 만들어야 한다.
         elif role == "value":
             return DeterministicMixin.act(self, inputs, role)
 
