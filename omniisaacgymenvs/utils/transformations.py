@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-import hacman.utils.robosuite_transform_utils as transform_utils
+import omniisaacgymenvs.utils.robosuite_transform_utils as transform_utils
 import scipy.spatial.transform as spt
 from transforms3d import quaternions, euler
 # from torchgeometry.core.conversions import rotation_matrix_to_quaternion
