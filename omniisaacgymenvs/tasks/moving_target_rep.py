@@ -11,7 +11,6 @@ import omni.replicator.core as rep
 from omniisaacgymenvs.tasks.base.rl_task import RLTask
 from omniisaacgymenvs.robots.articulations.ur5e_tool import UR5eTool
 from omniisaacgymenvs.robots.articulations.views.ur5e_view import UR5eView
-from omniisaacgymenvs.sensors.views.lidar_view import LidarView
 from omniisaacgymenvs.tasks.utils.pcd_writer import PointcloudWriter
 from omniisaacgymenvs.tasks.utils.pcd_listener import PointcloudListener
 from omni.replicator.isaac.scripts.writers.pytorch_listener import PytorchListener
