@@ -1,5 +1,5 @@
 import torch
-from torch_geometric.nn import MLP, PointConv, fps, global_max_pool, radius, global_mean_pool
+from torch_geometric.nn import MLP, PointNetConv, fps, global_max_pool, radius, global_mean_pool
 from torch_geometric.nn import MLP, knn_interpolate
 
 import numpy as np
@@ -31,7 +31,7 @@ class SAModule(torch.nn.Module):
         super().__init__()
         self.ratio = ratio
         self.r = r
-        self.conv = PointConv(nn, add_self_loops=False)
+        self.conv = PointNetConv(nn, add_self_loops=False)
         self.fps_random_start = fps_random_start
 
     def forward(self, x, pos, batch):
@@ -116,7 +116,7 @@ class PointNet2Segmentation(torch.nn.Module):
         if len(self.mlps) == 0:
             # Just use a feature extractor
             out_list = [x]
-        else:            
+        else:
             out_list = []
             for mlp in self.mlps:
                 out_list.append(mlp(x))
