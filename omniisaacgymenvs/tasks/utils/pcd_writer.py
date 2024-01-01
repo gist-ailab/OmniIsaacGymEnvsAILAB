@@ -127,11 +127,14 @@ class PointcloudWriter(Writer):
         for annotator in data.keys():
             if annotator.startswith("pointcloud"):
                 if len(annotator.split('_'))==2:
-                    idx = f'env_{0}'
+                    # idx = f'env_{0}'
+                    idx = 0
                 elif len(annotator.split('_'))==3:
-                    idx = f'env_{int(annotator.split("_")[-1])}'
+                    # idx = f'env_{int(annotator.split("_")[-1])}'
+                    idx = int(annotator.split("_")[-1])
 
                 pcd_np = data[annotator]['data']    # get point cloud data as numpy array
+                # TODO: 여기에서 얻은 pcd에 대해 normal vector를 얻어야 한다.
 
                 # sampling point cloud for making same size
                 o3d_org_point_cloud.points = v3d(pcd_np)
@@ -139,8 +142,10 @@ class PointcloudWriter(Writer):
                 pcd_sampled = np.asarray(o3d_downsampled_pcd.points)
 
                 pcd_tensor = torch.from_numpy(pcd_sampled).unsqueeze(0).to(self.device)
+                # pcd_tensor = torch.from_numpy(pcd_sampled).to(self.device)
 
-                if int(idx.split('_')[-1]) == 0:
+                # if int(idx.split('_')[-1]) == 0:
+                if idx == 0:
                     pcd_tensors = pcd_tensor
                 else:
                     pcd_tensors = torch.cat((pcd_tensors, pcd_tensor), dim=0)
