@@ -27,14 +27,21 @@ class PointCloudExtractor(BaseFeaturesExtractor):
             # backward compatibility
             preprocessing_fn = preprocessing_fn[:-6]
         self.preprocessing_fn = preprocessing_fn
-        self.preprocessing = globals()['preprocessing_'+preprocessing_fn] # Get processing function by name
-        input_channels = 1 # Mask channel
-        if preprocessing_fn == 'flow' or preprocessing_fn == 'flow_v0':
-            input_channels += 3
-        elif preprocessing_fn == 'goal_pose' or preprocessing_fn == 'goal_pose_v0':
-            input_channels += 12
-        elif preprocessing_fn == 'goal_pose_quat':
-            input_channels += 7
+
+        if self.preprocessing_fn is None:
+            self.preprocessing = None
+            input_channels = 0
+        else:
+            ################ original code from HACMan ################
+            self.preprocessing = globals()['preprocessing_'+self.preprocessing_fn] # Get processing function by name
+            input_channels = 1 # Mask channel
+            if preprocessing_fn == 'flow' or preprocessing_fn == 'flow_v0':
+                input_channels += 3
+            elif preprocessing_fn == 'goal_pose' or preprocessing_fn == 'goal_pose_v0':
+                input_channels += 12
+            elif preprocessing_fn == 'goal_pose_quat':
+                input_channels += 7
+            ################ original code from HACMan ################
         self.backbone = init_network(config, input_channels=input_channels, output_channels=[])
         
     def forward(self, observations: TensorDict, per_point_output=False) -> torch.Tensor:
@@ -64,7 +71,7 @@ class PointCloudExtractor(BaseFeaturesExtractor):
         
         return out
     
-    
+
 class PointCloudGlobalExtractor(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.spaces.Dict,
                  preprocessing_fn='flow',
