@@ -7,8 +7,7 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.type_aliases import TensorDict
 from stable_baselines3.common.torch_layers import create_mlp
 from omniisaacgymenvs.model.common import init_network
-
-from hacman.utils.transformations import transform_point_cloud, decompose_pose_tensor
+from omniisaacgymenvs.utils.transformations import transform_point_cloud, decompose_pose_tensor
 from torch_geometric.data import Data, Batch
 from torch_geometric.nn import MLP
 
