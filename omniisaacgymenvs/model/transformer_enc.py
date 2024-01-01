@@ -1,39 +1,99 @@
+import math
 import torch
 import torch.nn as nn
-from skrl.models.torch import DeterministicMixin, GaussianMixin, Model
-# TODO: 여기에서는 point2를 통해 만든 feature를 받아서, 그것을 shared model에 넣어서 action을 만들어야 한다.
+from torch.nn import Linear,LayerNorm, \
+    TransformerEncoder, TransformerEncoderLayer, \
+    TransformerDecoder, TransformerDecoderLayer, \
+    Transformer
+import torch.nn.functional as F
+import torch.optim as optim
 
-# define shared model (stochastic and deterministic models) using mixins
-class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
-    def __init__(self, observation_space, action_space, device, clip_actions=False,
-                 clip_log_std=True, min_log_std=-20, max_log_std=2, reduction="sum"):
-        Model.__init__(self, observation_space, action_space, device)
-        GaussianMixin.__init__(self, clip_actions, clip_log_std, min_log_std, max_log_std, reduction)
-        DeterministicMixin.__init__(self, clip_actions)
+from torch import Tensor
+import numpy as np
 
-        # TODO: self.net을 Transformer encoder로 바꿔야 한다.
-        self.net = nn.Sequential(nn.Linear(self.num_observations, 256),
-                                 nn.ELU(),
-                                 nn.Linear(256, 128),
-                                 nn.ELU(),
-                                 nn.Linear(128, 64),
-                                 nn.ELU())
-        # TODO: self.net을 Transformer encoder로 바꿔야 한다. 출력 차원은 
+class TransformerEncoder(nn.Module):
+    def __init__(self,
+                 input_dim: int = 128,
+                 num_heads: int = 8,
+                 encoder_hidden_dim: int = 64,
+                 dim_feedforward: int = 512,  # encoder, decoder, etc 별로 세분화 하여 나뉘어 질 수도 있음
+                 num_points: int = 200,
+                 output_feature: int = 64,
+                 num_layers: int = 6,
+                 ):
+        super(TransformerEncoder, self).__init__()
 
-        self.mean_layer = nn.Linear(64, self.num_actions)
-        self.log_std_parameter = nn.Parameter(torch.zeros(self.num_actions))
+        self.num_points = num_points
+        self.encoder_hidden_dim = encoder_hidden_dim
+        self.relu = nn.ReLU(inplace=True)
+        self.dropout = nn.Dropout(p=0.2)
 
-        self.value_layer = nn.Linear(64, 1)
+        # self.encoder_input_embedding = Linear(input_dim, encoder_hidden_dim)
+        # encoder_layers = TransformerEncoderLayer(d_model=input_dim, nhead=num_heads,
+        #                                          dim_feedforward=dim_feedforward, batch_first=True)
+        # self.transformer_encoder = TransformerEncoder(encoder_layers, num_layers=num_layers,
+        #                                               norm=nn.LayerNorm(encoder_hidden_dim))
+        # self.output_projection = Linear(encoder_hidden_dim, output_feature)
+        # self.feature_projection = Linear(encoder_hidden_dim, 5)
+        ''' feature를 전달받는 거라 feature projection은 필요 없음.
+          그래서 d_model에 encoder_hidden_dim 대신 input_dim을 넣음'''
+        encoder_layers = TransformerEncoderLayer(d_model=input_dim, nhead=num_heads,
+                                                 dim_feedforward=dim_feedforward, batch_first=True)
+        self.transformer_encoder = TransformerEncoder(encoder_layers, num_layers=num_layers,
+                                                      norm=nn.LayerNorm(input_dim))
 
-    def act(self, inputs, role):
-        if role == "policy":
-            return GaussianMixin.act(self, inputs, role)
-        # TODO: 여기에서는 point2를 통해 만든 feature를 받아서, 그것을 shared model에 넣어서 action을 만들어야 한다.
-        elif role == "value":
-            return DeterministicMixin.act(self, inputs, role)
+        # TODO: attention pooling 추가해야 함
+        self.output_projection = Linear(input_dim, output_feature)
+        
+        self.feature_projection = Linear(encoder_hidden_dim, 5)
+        
+        # projection from hidden dimension to 1 dimension for regression. output has a only one feature
 
-    def compute(self, inputs, role):
-        if role == "policy":
-            return self.mean_layer(self.net(inputs["states"])), self.log_std_parameter, {}
-        elif role == "value":
-            return self.value_layer(self.net(inputs["states"])), {}
+        # self.linear_mapping = Linear(in_features=decoder_hidden_dim,
+        #                              out_features=1)
+
+    def forward(self, src: Tensor):
+        """
+        The length of trg must be equal to the length of the actual target sequence
+        https://towardsdatascience.com/how-to-make-a-pytorch-transformer-for-time-series-forecasting-69e073d4061e#:~:text=The%20length%20of%20trg%20must%20be%20equal%20to%20the%20length%20of%20the%20actual%20target%20sequence
+
+        Returns a tensor of shape:
+        [target_sequence_length, batch_size, prediction_length]
+
+        Args:
+            src: the encoder's output sequence. Shape: (S,E) for unbatched input,
+                 (S, N, E) if batch_first=False or (N, S, E) if
+                 batch_first=True, where S is the source sequence length,
+                 N is the batch size, and E is the number of features (1 if univariate)
+            tgt: the sequence to the decoder. Shape: (T,E) for unbatched input,
+                 (T, N, E) if batch_first=False or (N, T, E) if
+                 batch_first=True, where T is the target sequence length,
+                 N is the batch size, and E is the number of features (1 if univariate)
+            src_mask: the mask for the src sequence to prevent the models from
+                      using data points from the target sequence
+            tgt_mask: the mask for the tgt sequence to prevent the models from
+                      using data points from the target sequence
+        """
+        # src = torch.flatten(src, start_dim=1) # src shape: [batch_size, src length, dim_val]
+        # tgt = torch.flatten(tgt, start_dim=1) # tgt shape: [batch_size, target seq len, dim_val]
+        # src_embedding = self.encoder_input_embedding(src)  # src shape: [batch_size, src length, dim_val] applied to each time step
+        
+        ''' feature를 전달받는 거라 feature projection은 필요 없음'''
+        encoder_output = self.transformer_encoder(src)  # src shape: [batch_size, enc_seq_len, dim_val]
+
+        encoder_output = self.dropout(encoder_output)
+        output = self.feature_projection(encoder_output)
+        # TODO: attention pooling 추가해야 함
+
+        if output.shape[0] == 1:
+            pass
+        else:
+            output = output.squeeze()
+
+        ouput = self.dropout(output)
+        ouput_permute = torch.permute(output, (0, 2, 1))
+        output = self.sequence_projection(ouput_permute)
+        output = self.relu(output)
+        output = output.squeeze()
+
+        return output
