@@ -1,6 +1,6 @@
 import torch
-from omniisaacgymenvs.model.point_transformer import PointTransformerSegmentation
-from omniisaacgymenvs.model.point2 import PointNet2Classification, PointNet2Segmentation
+# from omniisaacgymenvs.model.point_transformer import PointTransformerSegmentation
+from omniisaacgymenvs.model.pointnet2 import PointNet2Classification, PointNet2Segmentation
 import numpy as np
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -14,14 +14,14 @@ def add_model_config(parser):
     return
 
 def init_network(config, input_channels, output_channels, mode=None):
-    if config["model"] == 'pt':
-        network = PointTransformerSegmentation(input_channels, output_channels, 
-                                            dim_model=[32, 64, 128, 256, 512], 
-                                            k=16, 
-                                            fps_random_start=not config['fps_deterministic'],
-                                            pos_in_feature=config["pos_in_feature"],
-                                            normalize_pos=config["normalize_pos"]).to(device)
-    elif config["model"] == 'pn':
+    # if config["model"] == 'pt':
+    #     network = PointTransformerSegmentation(input_channels, output_channels, 
+    #                                         dim_model=[32, 64, 128, 256, 512], 
+    #                                         k=16, 
+    #                                         fps_random_start=not config['fps_deterministic'],
+    #                                         pos_in_feature=config["pos_in_feature"],
+    #                                         normalize_pos=config["normalize_pos"]).to(device)
+    if config["model"] == 'pn':
         network = PointNet2Segmentation(input_channels, output_channels, 
                                     dropout=config['dropout'],
                                     fps_random_start=not config['fps_deterministic'],
