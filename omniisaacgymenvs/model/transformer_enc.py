@@ -11,17 +11,21 @@ import torch.optim as optim
 from torch import Tensor
 import numpy as np
 
-class TransformerEncoder(nn.Module):
+from omniisaacgymenvs.model.attention import AttentionPooling
+
+class TransformerEnc(nn.Module):
     def __init__(self,
                  input_dim: int = 128,
                  num_heads: int = 8,
+                 attention_num_heads: int = 8,
                  encoder_hidden_dim: int = 64,
+                 attention_hidden_dim: int = 64,
                  dim_feedforward: int = 512,  # encoder, decoder, etc 별로 세분화 하여 나뉘어 질 수도 있음
                  num_points: int = 200,
                  output_feature: int = 64,
                  num_layers: int = 6,
                  ):
-        super(TransformerEncoder, self).__init__()
+        super(TransformerEnc, self).__init__()
 
         self.num_points = num_points
         self.encoder_hidden_dim = encoder_hidden_dim
@@ -39,10 +43,14 @@ class TransformerEncoder(nn.Module):
           그래서 d_model에 encoder_hidden_dim 대신 input_dim을 넣음'''
         encoder_layers = TransformerEncoderLayer(d_model=input_dim, nhead=num_heads,
                                                  dim_feedforward=dim_feedforward, batch_first=True)
-        self.transformer_encoder = TransformerEncoder(encoder_layers, num_layers=num_layers,
+        self.transformer_encoder = TransformerEncoder(encoder_layers,
+                                                      num_layers=num_layers,
                                                       norm=nn.LayerNorm(input_dim))
+        
+        self.attention_pooling = AttentionPooling(embed_dim=input_dim,
+                                                  num_heads=attention_num_heads,
+                                                  latent_dim=attention_hidden_dim)
 
-        # TODO: attention pooling 추가해야 함
         self.output_projection = Linear(input_dim, output_feature)
         
         self.feature_projection = Linear(encoder_hidden_dim, 5)
@@ -82,18 +90,8 @@ class TransformerEncoder(nn.Module):
         encoder_output = self.transformer_encoder(src)  # src shape: [batch_size, enc_seq_len, dim_val]
 
         encoder_output = self.dropout(encoder_output)
-        output = self.feature_projection(encoder_output)
-        # TODO: attention pooling 추가해야 함
+        pooling_output = self.attention_pooling(encoder_output)
 
-        if output.shape[0] == 1:
-            pass
-        else:
-            output = output.squeeze()
-
-        ouput = self.dropout(output)
-        ouput_permute = torch.permute(output, (0, 2, 1))
-        output = self.sequence_projection(ouput_permute)
-        output = self.relu(output)
-        output = output.squeeze()
+        output = self.output_projection(pooling_output)
 
         return output
