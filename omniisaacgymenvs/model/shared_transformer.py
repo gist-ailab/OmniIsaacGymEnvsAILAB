@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from skrl.models.torch import DeterministicMixin, GaussianMixin, Model
 from omniisaacgymenvs.model.common import init_network
-from omniisaacgymenvs.model.transformer_enc import TransformerEncoder
+from omniisaacgymenvs.model.transformer_enc import TransformerEnc
 from omniisaacgymenvs.algos.feature_extractor import PointCloudExtractor
 
 # TODO: 여기에서는 point2를 통해 만든 feature를 받아서, 그것을 shared model에 넣어서 action을 만들어야 한다.
@@ -24,10 +24,10 @@ class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
                   "normalize_pos_param": None}
         self.pcd_backbone = init_network(config, input_channels=0, output_channels=[])
 
-        self.net = TransformerEncoder(
-                                      input_dim=128,        # 이걸 config에 넣어서 pcd랑 변수 맞추면 좋을 듯
-                                      output_feature=64,    # 아래의 mean_layer, value_layer의 input dim과 변수 맞추면 좋을 듯
-                                      )
+        self.net = TransformerEnc(
+                                  input_dim=128,        # 이걸 config에 넣어서 pcd랑 변수 맞추면 좋을 듯
+                                  output_feature=64,    # 아래의 mean_layer, value_layer의 input dim과 변수 맞추면 좋을 듯
+                                  )
 
         self.mean_layer = nn.Linear(64, self.num_actions)
         self.log_std_parameter = nn.Parameter(torch.zeros(self.num_actions))
@@ -47,10 +47,8 @@ class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
         point_pos = torch.reshape(data, (-1, data.shape[-1])).to(dtype=torch.float32)
         num_of_env = torch.arange(data.shape[0], device=point_pos.device)
         batch = torch.repeat_interleave(num_of_env, data.shape[1], dim=0)
-
+        point_feature = self.pcd_backbone(point_feature, point_pos, batch)
         if role == "policy":
-            point_feature = self.pcd_backbone(point_feature, point_pos, batch)
-            return self.mean_layer(self.net(inputs["states"])), self.log_std_parameter, {}
+            return self.mean_layer(self.net(point_feature)), self.log_std_parameter, {}
         elif role == "value":
-            point_feature = self.pcd_backbone(point_feature, point_pos, batch)
-            return self.value_layer(self.net(inputs["states"])), {}
+            return self.value_layer(self.net(point_feature)), {}
