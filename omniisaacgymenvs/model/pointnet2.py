@@ -116,7 +116,7 @@ class PointNet2Segmentation(torch.nn.Module):
         # pos -> [N, 3]
         # batch -> [N], N을 환경 개수만큼 나누면 각 환경의 pointcloud가 몇개인지 알 수 있다.
 
-        num_of_env = batch[-1]+1
+        num_of_env = batch[-1] + 1
         point_feature = torch.reshape(x, (num_of_env, -1, x.shape[-1]))
 
         # # 나는 mlp 통과하는 거 없이 feature extractor만 쓸꺼라 주석 처리
