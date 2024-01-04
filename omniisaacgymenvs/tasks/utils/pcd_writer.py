@@ -36,7 +36,7 @@ class PointcloudWriter(Writer):
 
     def __init__(self, listener: PointcloudListener,
                  output_dir: str = None,
-                 num_observations: int = 100,
+                 pcd_sampling_num: int = 100,
                  device: str = "cuda"):
         # If output directory is specified, writer will write annotated data to the given directory
         if output_dir:
@@ -49,7 +49,7 @@ class PointcloudWriter(Writer):
 
         self.annotators = [AnnotatorRegistry.get_annotator("pointcloud")]
         self.listener = listener
-        self.num_observations = num_observations
+        self.pcd_sampling_num = pcd_sampling_num
         self.device = device
 
     def write(self, data: dict) -> None:
@@ -121,7 +121,7 @@ class PointcloudWriter(Writer):
             raise Exception("Data is Null")
 
         # TODO: for문 말고 matrix화 시킬 수 있다면 한번 시도를....
-        num_samples = self.num_observations
+        num_samples = self.pcd_sampling_num
         v3d = o3d.utility.Vector3dVector
         o3d_org_point_cloud = o3d.geometry.PointCloud()
         for annotator in data.keys():
