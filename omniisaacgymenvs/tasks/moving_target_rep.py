@@ -76,13 +76,11 @@ class MovingTargetTask(RLTask):
 
         self.stage = omni.usd.get_context().get_stage()        
 
+        self._pcd_sampling_num = 150
+        
         # observation and action space
-        # self._num_observations = 16
-        # self._num_observations = 19
-        # self._num_observations = 24
-        # self._num_observations = 22
-        self._num_observations = 150    # number of sample point cloud
-
+        self._num_observations = self._pcd_sampling_num * self._num_envs
+        # TODO: robot state가 추가될 경우, 위 수식 수정
 
         if self._control_space == "joint":
             self._num_actions = 6
@@ -239,7 +237,7 @@ class MovingTargetTask(RLTask):
         self.pointcloud_listener = self.PointcloudListener()
         self.pointcloud_writer = self.rep.WriterRegistry.get("PointcloudWriter")
         self.pointcloud_writer.initialize(listener=self.pointcloud_listener,
-                                          num_observations=self._num_observations,
+                                          pcd_sampling_num=self._pcd_sampling_num,
                                           device="cuda",
                                           )
         self.pointcloud_writer.attach(self.render_products)
@@ -552,9 +550,12 @@ class MovingTargetTask(RLTask):
 
         # make new obs_buf into different dimension for point cloud
         # it originally define at RLTask
-        self.obs_buf = torch.zeros((self._num_envs, self.num_observations, 3), device=self._device, dtype=torch.float)
-        self.obs_buf = pointcloud
-        # TODO: pointcloud feature는 차원은 1차원 벡터로 해야하나...?
+        # self.obs_buf = torch.zeros((self._num_envs, self.num_observations, 3), device=self._device, dtype=torch.float)
+        # self.obs_buf = pointcloud
+        self.obs_buf = pointcloud.view([pointcloud.shape[0], -1])
+        # TODO: pointcloud feature는 차원은 1차원 벡터로 해야하나...? => 1차원으로 했다가 바꿔보자
+        # TODO: 될 거 같은데. 이러면 그냥 robot state 도 같이 껴서 넣어도 될듯
+        
         
         # self.obs_buf[:, 0] = self.progress_buf / self._max_episode_length
         # # 위에 있는게 꼭 들어가야 할까??? 없어도 될 것 같은데....
