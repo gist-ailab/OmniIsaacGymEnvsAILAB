@@ -23,6 +23,9 @@ class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
                   "normalize_pos": True,
                   "normalize_pos_param": None}
         self.pcd_backbone = init_network(config, input_channels=0, output_channels=[])
+        # TODO: 나중에는 PointCloudExtractor를 사용하여 더 고도화된 feature extractor를 사용해야 함.
+        # from omniisaacgymenvs.algos.feature_extractor import PointCloudExtractor
+        
 
         self.net = TransformerEnc(
                                   input_dim=128,        # 이걸 config에 넣어서 pcd랑 변수 맞추면 좋을 듯
@@ -37,17 +40,19 @@ class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
     def act(self, inputs, role):
         if role == "policy":
             return GaussianMixin.act(self, inputs, role)
-        # TODO: 여기에서는 point2를 통해 만든 feature를 받아서, 그것을 shared model에 넣어서 action을 만들어야 한다.
         elif role == "value":
             return DeterministicMixin.act(self, inputs, role)
 
     def compute(self, inputs, role):
-        data = inputs["states"]
+        pcd_data = inputs["states"]
         point_feature = None
+        data = pcd_data.view([pcd_data.shape[0], -1, 3])
         point_pos = torch.reshape(data, (-1, data.shape[-1])).to(dtype=torch.float32)
         num_of_env = torch.arange(data.shape[0], device=point_pos.device)
         batch = torch.repeat_interleave(num_of_env, data.shape[1], dim=0)
         point_feature = self.pcd_backbone(point_feature, point_pos, batch)
+        # TODO: n개의 point_feature를 concat해주어야 함. 이걸 transformer에 넣어 줌.
+        # TODO: n개의 point_feature를 만드는 건, pcd_backbone에서 해주어야 함.
         if role == "policy":
             return self.mean_layer(self.net(point_feature)), self.log_std_parameter, {}
         elif role == "value":
