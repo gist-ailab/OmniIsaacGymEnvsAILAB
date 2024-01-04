@@ -118,6 +118,9 @@ class PointNet2Segmentation(torch.nn.Module):
 
         num_of_env = batch[-1] + 1
         point_feature = torch.reshape(x, (num_of_env, -1, x.shape[-1]))
+        # TODO: 여기에서 출력되는 point feature는 3차원의 형태가 되도록 출력할 것.
+        # TODO: [batch, 1, num_of_feature] 이걸 나중에 concat함
+        # TODO: transformer 모델에 있던 attention pooling을 여기에 넣어야 할지도....
 
         # # 나는 mlp 통과하는 거 없이 feature extractor만 쓸꺼라 주석 처리
         # if len(self.mlps) == 0:
