@@ -9,6 +9,7 @@
 
 from typing import Optional
 import torch
+import torch.utils.dlpack
 import carb
 import warp as wp
 import omni.replicator.core as rep
@@ -17,8 +18,10 @@ from omniisaacgymenvs.tasks.utils.pcd_listener import PointcloudListener
 
 import os
 import open3d as o3d
+import open3d.core as o3c
 import numpy as np
 import point_cloud_utils as pcu
+import copy
 
 class PointcloudWriter(Writer):
     """A custom writer that uses omni.replicator API to retrieve RGB data via render products
@@ -37,6 +40,11 @@ class PointcloudWriter(Writer):
     def __init__(self, listener: PointcloudListener,
                  output_dir: str = None,
                  pcd_sampling_num: int = 100,
+                 pcd_normalize: bool = True,
+                 env_pos: torch.Tensor = None,
+                 camera_positions: dict = None,
+                 camera_orientations: tuple = None,
+                 visualize_point_cloud: bool = False,
                  device: str = "cuda"):
         # If output directory is specified, writer will write annotated data to the given directory
         if output_dir:
@@ -50,6 +58,11 @@ class PointcloudWriter(Writer):
         self.annotators = [AnnotatorRegistry.get_annotator("pointcloud")]
         self.listener = listener
         self.pcd_sampling_num = pcd_sampling_num
+        self.pcd_normalize = pcd_normalize
+        self.env_pos = env_pos
+        self.camera_positions = camera_positions
+        self.camera_orientations = camera_orientations
+        self.visualize_point_cloud = visualize_point_cloud
         self.device = device
 
     def write(self, data: dict) -> None:
@@ -124,17 +137,60 @@ class PointcloudWriter(Writer):
         num_samples = self.pcd_sampling_num
         v3d = o3d.utility.Vector3dVector
         o3d_org_point_cloud = o3d.geometry.PointCloud()
+
+        device_num = torch.cuda.current_device()
+        device = o3d.core.Device(f"{self.device}:{device_num}")
+        o3d_t_org_point_cloud = o3d.t.geometry.PointCloud(device)
+
         for annotator in data.keys():
             if annotator.startswith("pointcloud"):
                 if len(annotator.split('_'))==2:
                     # idx = f'env_{0}'
-                    idx = 0
+                    idx = 0 # env_0
                 elif len(annotator.split('_'))==3:
                     # idx = f'env_{int(annotator.split("_")[-1])}'
-                    idx = int(annotator.split("_")[-1])
+                    idx = int(annotator.split("_")[-1]) # env_n
 
+                if self.visualize_point_cloud:
+                    self._visualize_pointcloud(idx, self.env_pos, data[annotator])
                 pcd_np = data[annotator]['data']    # get point cloud data as numpy array
+                pcd_normal = data[annotator]['info']['pointNormals']
+                pcd_semantic = data[annotator]['info']['pointSemantic']
+
+                pcd_pos = torch.from_numpy(data[annotator]['data']).to(self.device)
+                pcd_normal = torch.from_numpy(data[annotator]['info']['pointNormals']).to(self.device)
+                pcd_semantic = torch.from_numpy(data[annotator]['info']['pointSemantic']).to(self.device)
+
+                
+                # sampling point cloud
+                o3d_tensor = o3c.Tensor.from_dlpack(torch.utils.dlpack.to_dlpack(pcd_pos))
+                o3d_pcd_tensor = o3d.t.geometry.PointCloud(o3d_tensor)
+                o3d_downsampled_pcd = o3d_pcd_tensor.farthest_point_down_sample(num_samples)
+                downsampled_points = o3d_downsampled_pcd.point
+                torch_tensor_points = torch.utils.dlpack.from_dlpack(downsampled_points.positions.to_dlpack())
+
+
+                if self.pcd_normalize:
+                    pcd_pos = self._normalize_pcd(
+                                                  pcd_pos,
+                                                  pcd_normal,
+                                                  pcd_semantic,
+                                                  idx)
+
                 # TODO: 여기에서 얻은 pcd에 대해 normal vector를 얻어야 한다.
+                for i  in torch.unique(pcd_semantic):
+                    pcd_idx = torch.where(pcd_semantic==i)[0]
+                    pcd_mask = pcd_pos[pcd_idx]
+                    # TODO: 여기에서 pcd mask별 normalize 진행
+
+
+                o3d_tensor = o3c.Tensor.from_dlpack(torch.utils.dlpack.to_dlpack(pcd_pos))
+                o3d_pcd_tensor = o3d.t.geometry.PointCloud(o3d_tensor)
+                o3d_downsampled_pcd = o3d_pcd_tensor.farthest_point_down_sample(num_samples)
+                downsampled_points = o3d_downsampled_pcd.point
+                torch_tensor_points = torch.utils.dlpack.from_dlpack(downsampled_points.positions.to_dlpack())
+                # TODO: sampling을 mask별로 진행할 것...
+
 
                 # sampling point cloud for making same size
                 o3d_org_point_cloud.points = v3d(pcd_np)
@@ -151,7 +207,141 @@ class PointcloudWriter(Writer):
                     pcd_tensors = torch.cat((pcd_tensors, pcd_tensor), dim=0)
 
         return pcd_tensors
+    
 
+    def _sampling_pcd(self,
+                      pcd_pos,
+                      pcd_normal,
+                      pcd_semantic,
+                      idx: int) -> np.array:
+        semantics = torch.unique(pcd_semantic)
+        for idx in range(semantics.shape[0]):
+            print(f'idx: {idx}, semantic: {semantics[idx]}')
+            index = torch.unique(pcd_semantic)[idx]
+            pcd_idx = torch.where(pcd_semantic==index)[0]
+            pcd = pcd_pos[pcd_idx]
+            pcd_mean = torch.mean(pcd, axis=0)
+            pcd_mean = torch.unsqueeze(pcd_mean, dim=0)
+
+            pcd_mean_xyz = pcd_mean.repeat(pcd.shape[0], 1)
+            normalized_pcd = pcd - pcd_mean_xyz
+            if idx == 0:
+                normalized_pcds = normalized_pcd
+                pcd_means = pcd_mean
+            if idx != 0:
+                normalized_pcds = torch.concat((normalized_pcds, normalized_pcd), axis=0)
+                pcd_means = torch.concat((pcd_means, pcd_mean), axis=0)
+
+        return normalized_pcd, pcd_means
+
+
+    
+    def _normalize_pcd(self,
+                       pcd_pos,
+                       pcd_normal,
+                       pcd_semantic,
+                       pcd_means,
+                       idx: int) -> np.array:
+
+        semantics = torch.unique(pcd_semantic)
+        for idx in range(semantics.shape[0]):
+            # print(f'idx: {idx}, semantic: {semantics[idx]}')
+            index = torch.unique(pcd_semantic)[idx]
+            pcd_idx = torch.where(pcd_semantic==index)[0]
+            pcd = pcd_pos[pcd_idx]
+            pcd_mean = torch.mean(pcd, axis=0)
+            pcd_mean = torch.unsqueeze(pcd_mean, dim=0)
+            pcd_mean_xyz = pcd_mean.repeat(pcd.shape[0], 1)
+            normalized_pcd = pcd - pcd_mean_xyz
+            if idx == 0:
+                normalized_pcds = normalized_pcd
+            if idx != 0:
+                normalized_pcds = torch.concat((normalized_pcds, normalized_pcd), axis=0)
+
+        return normalized_pcd
+    
+    def _visualize_pointcloud(self, idx, env_pos, pcd_data: dict) -> None:
+        '''
+        try:
+            pcd_data = data[annotator]
+            env_pos = self.env_pos
+        except:
+            print('pcd_data is not defined')
+            print('Do you mean data[annotator]?')
+        
+        '''
+
+        pcd_np = pcd_data['data']    # get point cloud data as numpy array
+        pcd_normal = pcd_data['info']['pointNormals']
+        pcd_semantic = pcd_data['info']['pointSemantic']
+        
+        # lidar_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.2, origin=np.array([0.0, 0.0, 0.0]))
+        camera_position = np.array(self.camera_positions[idx])
+        lidar_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.2, origin=camera_position)
+        
+        # base pose is equal to [0, 0, 0]
+        org_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.2, origin=np.array(env_pos[idx]))
+
+        entire_pcd = o3d.geometry.PointCloud()
+        entire_pcd.points = o3d.utility.Vector3dVector(pcd_np)
+        o3d.visualization.draw_geometries(
+                                        #   [entire_pcd, lidar_coord],
+                                        #   [entire_pcd, lidar_coord, org_coord],
+                                          [entire_pcd, org_coord],
+                                        #   [entire_pcd],
+                                          window_name=f'entire point cloud, env_{idx}')
+
+
+
+        '''
+        # TODO: semantic index 순서가 한번씩 뒤바뀌는듯.... 확인 필요
+        ### 전체 semantic point cloud를 따로visualize ###
+        try:
+            pcd_data = data[annotator]
+        except:
+            print('pcd_data is not defined')
+        pcd_np = pcd_data['data']    # get point cloud data as numpy array
+        pcd_normal = pcd_data['info']['pointNormals']
+        pcd_semantic = pcd_data['info']['pointSemantic']
+        print(np.unique(pcd_semantic))
+        semantics = np.unique(pcd_semantic)
+        for idx in range(semantics.shape[0]):
+            print(f'idx: {idx}, semantic: {semantics[idx]}')
+            index = np.unique(pcd_semantic)[idx]
+            pcd_idx = np.where(pcd_semantic==index)[0]
+            pcd = pcd_np[pcd_idx]
+            point_cloud = o3d.geometry.PointCloud()
+            point_cloud.points = o3d.utility.Vector3dVector(pcd)
+            o3d.visualization.draw_geometries([point_cloud],
+                                                window_name=f'point cloud semantic {idx}')
+            
+        # robot
+        index_0 = np.unique(pcd_semantic)[0]
+        pcd_idx = np.where(pcd_semantic==index_0)[0]
+        pcd = pcd_np[pcd_idx]
+        point_cloud = o3d.geometry.PointCloud()
+        point_cloud.points = o3d.utility.Vector3dVector(pcd)
+        o3d.visualization.draw_geometries([point_cloud],
+                                          window_name='point cloud semantic 0')
+        
+        # tool
+        index_1 = np.unique(pcd_semantic)[1]
+        pcd_idx = np.where(pcd_semantic==index_1)[0]
+        pcd = pcd_np[pcd_idx]
+        point_cloud = o3d.geometry.PointCloud()
+        point_cloud.points = o3d.utility.Vector3dVector(pcd)
+        o3d.visualization.draw_geometries([point_cloud],
+                                          window_name='point cloud semantic 1')
+        
+        # obj
+        index_2 = np.unique(pcd_semantic)[2]
+        pcd_idx = np.where(pcd_semantic==index_2)[0]
+        pcd = pcd_np[pcd_idx]
+        point_cloud = o3d.geometry.PointCloud()
+        point_cloud.points = o3d.utility.Vector3dVector(pcd)
+        o3d.visualization.draw_geometries([point_cloud],
+                                          window_name='point cloud semantic 2')
+        '''
 
 # WriterRegistry.register(PointcloudWriter)
 rep.WriterRegistry.register(PointcloudWriter)
