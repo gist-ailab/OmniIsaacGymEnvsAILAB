@@ -50,6 +50,8 @@ sim:
   # set to True if you use camera sensors in the environment
   # enable_cameras: False
   enable_cameras: True  # 231121 added BSH for PytorchListener
+  point_cloud_normalization: True # 240105 added BSH
+  point_cloud_samples: 90 # 240108 added BSH
 
   default_physics_material:
     static_friction: 1.0
