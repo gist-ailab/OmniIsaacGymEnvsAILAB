@@ -122,6 +122,9 @@ class PointNet2Segmentation(torch.nn.Module):
         # TODO: [batch, 1, num_of_feature] 이걸 나중에 concat함
         # TODO: transformer 모델에 있던 attention pooling을 여기에 넣어야 할지도....
 
+        ''' flatten 시킬수도 있고, pooling 시킬 수도 있고, '''
+        flatten_feature = torch.reshape(point_feature, (3, -1))
+
         # # 나는 mlp 통과하는 거 없이 feature extractor만 쓸꺼라 주석 처리
         # if len(self.mlps) == 0:
         #     # Just use a feature extractor
