@@ -14,6 +14,7 @@ from omniisaacgymenvs.robots.articulations.views.ur5e_view import UR5eView
 from omniisaacgymenvs.tasks.utils.pcd_writer import PointcloudWriter
 from omniisaacgymenvs.tasks.utils.pcd_listener import PointcloudListener
 from omni.replicator.isaac.scripts.writers.pytorch_listener import PytorchListener
+from omni.isaac.core.utils.semantics import add_update_semantics
 
 import omni
 from omni.isaac.core.prims import RigidPrimView
@@ -76,11 +77,14 @@ class MovingTargetTask(RLTask):
 
         self.stage = omni.usd.get_context().get_stage()        
 
-        self._pcd_sampling_num = 150
+        self._pcd_sampling_num = self._task_cfg["sim"]["point_cloud_samples"]
         
         # observation and action space
-        self._num_observations = self._pcd_sampling_num * self._num_envs
+        # self._num_observations = self._pcd_sampling_num * 3 * self._num_envs
+        self._num_observations = self._pcd_sampling_num * 2
+        # 2은 sub mask 총 개수
         # TODO: robot state가 추가될 경우, 위 수식 수정
+        # TODO: 위에서 숫자 3은 point cloud의 sub mask 개수를 의미함. 이를 state 또는 config에서 받아올 것.
 
         if self._control_space == "joint":
             self._num_actions = 6
@@ -121,6 +125,7 @@ class MovingTargetTask(RLTask):
 
         self._control_space = self._task_cfg["env"]["controlSpace"]
         self._goal_position = self._task_cfg["env"]["goal"]
+        self._pcd_normalization = self._task_cfg["sim"]["point_cloud_normalization"]
 
         
     def set_up_scene(self, scene) -> None:
@@ -151,6 +156,7 @@ class MovingTargetTask(RLTask):
         ################################################################################## 231121 added BSH
         self.render_products = []
         self.rgb_products = []
+        self.camera_positions = {}
         env_pos = self._env_pos.cpu()
 
         # Used to get depth data from the camera
@@ -180,13 +186,18 @@ class MovingTargetTask(RLTask):
             vertical_aperture = 0.135 (cm)
             clipping_range = 0.01 ~ 10 (m)
             '''
+            camera_position = (2 + env_pos[i][0], 1.5 + env_pos[i][1], 0.5)
+            self.camera_positions[i] = camera_position
+            self.camera_orientations = (0, -9, 60)
             camera = self.rep.create.camera(
                 # position=(0.5 + env_pos[i][0], 1.5 + env_pos[i][1], 0.4),
-                position=(3 + env_pos[i][0], 1.5 + env_pos[i][1], 0.5),
+                # position=(2 + env_pos[i][0], 1.5 + env_pos[i][1], 0.5),
+                position=camera_position,
                 # position=(0.5 + env_pos[i][0], 0.75 + env_pos[i][1], 0.4),
                 # position=(0.35 + env_pos[i][0], 0.5 + env_pos[i][1], 0.4),
                 # rotation=(0, -9, 90),
-                rotation=(0, -9, 60),
+                # rotation=(0, -9, 60),
+                rotation=self.camera_orientations,
 
                 # focal_length=0.18,
                 # focus_distance=3.86,
@@ -238,21 +249,26 @@ class MovingTargetTask(RLTask):
         self.pointcloud_writer = self.rep.WriterRegistry.get("PointcloudWriter")
         self.pointcloud_writer.initialize(listener=self.pointcloud_listener,
                                           pcd_sampling_num=self._pcd_sampling_num,
-                                          device="cuda",
+                                          pcd_normalize = self._pcd_normalization,
+                                          env_pos = self._env_pos.cpu(),
+                                          camera_positions=self.camera_positions,
+                                          camera_orientations=self.camera_orientations,
+                                          device=self.device,
                                           )
         self.pointcloud_writer.attach(self.render_products)
         ################################################################################## 231121 added BSH
             
-        # get target object semantic data
-        # 그런데 어짜피 로봇 point cloud는 필요 없기 때문에 안 받아도 될듯
-        self._robot_semantics = {}
-        for i in range(self._num_envs):
-            robot_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/robot")
-            self._robot_semantics[i] = Semantics.SemanticsAPI.Apply(robot_prim, "Semantics")
-            self._robot_semantics[i].CreateSemanticTypeAttr()
-            self._robot_semantics[i].CreateSemanticDataAttr()
-            self._robot_semantics[i].GetSemanticTypeAttr().Set("class")
-            self._robot_semantics[i].GetSemanticDataAttr().Set(f"robot_{i}")
+        # # get target object semantic data
+        # # 그런데 어짜피 로봇 point cloud는 필요 없기 때문에 안 받아도 될듯
+        # self._robot_semantics = {}
+        # for i in range(self._num_envs):
+        #     robot_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/robot")
+        #     self._robot_semantics[i] = Semantics.SemanticsAPI.Apply(robot_prim, "Semantics")
+        #     self._robot_semantics[i].CreateSemanticTypeAttr()
+        #     self._robot_semantics[i].CreateSemanticDataAttr()
+        #     self._robot_semantics[i].GetSemanticTypeAttr().Set("class")
+        #     self._robot_semantics[i].GetSemanticDataAttr().Set(f"robot_{i}")
+        #     add_update_semantics(robot_prim, '0')
 
 
         # get tool semantic data
@@ -264,6 +280,7 @@ class MovingTargetTask(RLTask):
             self._tool_semantics[i].CreateSemanticDataAttr()
             self._tool_semantics[i].GetSemanticTypeAttr().Set("class")
             self._tool_semantics[i].GetSemanticDataAttr().Set(f"tool_{i}")
+            add_update_semantics(tool_prim, '1')
 
         # get target object semantic data
         self._target_semantics = {}
@@ -274,6 +291,7 @@ class MovingTargetTask(RLTask):
             self._target_semantics[i].CreateSemanticDataAttr()
             self._target_semantics[i].GetSemanticTypeAttr().Set("class")
             self._target_semantics[i].GetSemanticDataAttr().Set(f"target_{i}")
+            add_update_semantics(target_prim, '2')
 
         self.init_data()
         # return
@@ -552,9 +570,13 @@ class MovingTargetTask(RLTask):
         # it originally define at RLTask
         # self.obs_buf = torch.zeros((self._num_envs, self.num_observations, 3), device=self._device, dtype=torch.float)
         # self.obs_buf = pointcloud
-        self.obs_buf = pointcloud.view([pointcloud.shape[0], -1])
-        # TODO: pointcloud feature는 차원은 1차원 벡터로 해야하나...? => 1차원으로 했다가 바꿔보자
-        # TODO: 될 거 같은데. 이러면 그냥 robot state 도 같이 껴서 넣어도 될듯
+
+        '''
+        NE: number of environmet, N: number of points, F: feature dimension, 3: x, y, z
+        pointcloud: [NE, N, 3]
+        '''
+        self.obs_buf = pointcloud.view([pointcloud.shape[0], -1])   # [NE, N*3]
+        # TODO: observation에 robot state 도 같이 껴서 넣어도 될듯
         
         
         # self.obs_buf[:, 0] = self.progress_buf / self._max_episode_length
