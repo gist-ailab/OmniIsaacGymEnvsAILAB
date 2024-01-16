@@ -40,7 +40,7 @@ class PointcloudWriter(Writer):
     def __init__(self, listener: PointcloudListener,
                  output_dir: str = None,
                  pcd_sampling_num: int = 100,
-                 pcd_normalize: bool = True,
+                 pcd_normalize: bool = False,
                  env_pos: torch.Tensor = None,
                  camera_positions: dict = None,
                  camera_orientations: tuple = None,
@@ -112,6 +112,7 @@ class PointcloudWriter(Writer):
 
     @carb.profiler.profile
     def _convert_to_pytorch(self, data: dict) -> torch.Tensor:
+        # 이 함수는 이미지를 torch tensor로 바꿔주는 함수
         if data is None:
             raise Exception("Data is Null")
 
@@ -135,12 +136,12 @@ class PointcloudWriter(Writer):
 
         # TODO: for문 말고 matrix화 시킬 수 있다면 한번 시도를....
         num_samples = self.pcd_sampling_num
-        v3d = o3d.utility.Vector3dVector
-        o3d_org_point_cloud = o3d.geometry.PointCloud()
+        # v3d = o3d.utility.Vector3dVector
+        # o3d_org_point_cloud = o3d.geometry.PointCloud()
 
-        device_num = torch.cuda.current_device()
-        device = o3d.core.Device(f"{self.device}:{device_num}")
-        o3d_t_org_point_cloud = o3d.t.geometry.PointCloud(device)
+        # device_num = torch.cuda.current_device()
+        # device = o3d.core.Device(f"{self.device}:{device_num}")
+        # o3d_t_org_point_cloud = o3d.t.geometry.PointCloud(device)
 
         for annotator in data.keys():
             if annotator.startswith("pointcloud"):
@@ -162,59 +163,55 @@ class PointcloudWriter(Writer):
                 pcd_semantic = torch.from_numpy(data[annotator]['info']['pointSemantic']).to(self.device)
 
                 
-                # sampling point cloud
-                o3d_tensor = o3c.Tensor.from_dlpack(torch.utils.dlpack.to_dlpack(pcd_pos))
-                o3d_pcd_tensor = o3d.t.geometry.PointCloud(o3d_tensor)
-                o3d_downsampled_pcd = o3d_pcd_tensor.farthest_point_down_sample(num_samples)
-                downsampled_points = o3d_downsampled_pcd.point
-                torch_tensor_points = torch.utils.dlpack.from_dlpack(downsampled_points.positions.to_dlpack())
+                # # sampling point cloud
+                # o3d_tensor = o3c.Tensor.from_dlpack(torch.utils.dlpack.to_dlpack(pcd_pos))
+                # o3d_pcd_tensor = o3d.t.geometry.PointCloud(o3d_tensor)
+                # o3d_downsampled_pcd = o3d_pcd_tensor.farthest_point_down_sample(num_samples)
+                # downsampled_points = o3d_downsampled_pcd.point
+                # torch_tensor_points = torch.utils.dlpack.from_dlpack(downsampled_points.positions.to_dlpack())
 
 
                 if self.pcd_normalize:
-                    pcd_pos = self._normalize_pcd(
+                    pcd_pos = self._normalize_pcd(          # also conduct sampling
+                                                  idx,
                                                   pcd_pos,
-                                                  pcd_normal,
                                                   pcd_semantic,
-                                                  idx)
+                                                  num_samples,
+                                                  )
 
                 # TODO: 여기에서 얻은 pcd에 대해 normal vector를 얻어야 한다.
-                for i  in torch.unique(pcd_semantic):
-                    pcd_idx = torch.where(pcd_semantic==i)[0]
-                    pcd_mask = pcd_pos[pcd_idx]
-                    # TODO: 여기에서 pcd mask별 normalize 진행
+                # for i  in torch.unique(pcd_semantic):
+                #     pcd_idx = torch.where(pcd_semantic==i)[0]
+                #     pcd_mask = pcd_pos[pcd_idx]
+                #     # TODO: 여기에서 pcd mask별 normalize 진행
 
 
-                o3d_tensor = o3c.Tensor.from_dlpack(torch.utils.dlpack.to_dlpack(pcd_pos))
-                o3d_pcd_tensor = o3d.t.geometry.PointCloud(o3d_tensor)
-                o3d_downsampled_pcd = o3d_pcd_tensor.farthest_point_down_sample(num_samples)
-                downsampled_points = o3d_downsampled_pcd.point
-                torch_tensor_points = torch.utils.dlpack.from_dlpack(downsampled_points.positions.to_dlpack())
-                # TODO: sampling을 mask별로 진행할 것...
+                # # sampling point cloud for making same size
+                # o3d_org_point_cloud.points = v3d(pcd_np)
+                # o3d_downsampled_pcd = o3d_org_point_cloud.farthest_point_down_sample(num_samples)
+                # pcd_sampled = np.asarray(o3d_downsampled_pcd.points)
 
-
-                # sampling point cloud for making same size
-                o3d_org_point_cloud.points = v3d(pcd_np)
-                o3d_downsampled_pcd = o3d_org_point_cloud.farthest_point_down_sample(num_samples)
-                pcd_sampled = np.asarray(o3d_downsampled_pcd.points)
-
-                pcd_tensor = torch.from_numpy(pcd_sampled).unsqueeze(0).to(self.device)
-                # pcd_tensor = torch.from_numpy(pcd_sampled).to(self.device)
+                # pcd_tensor = torch.from_numpy(pcd_sampled).unsqueeze(0).to(self.device)
+                # # pcd_tensor = torch.from_numpy(pcd_sampled).to(self.device)
 
                 # if int(idx.split('_')[-1]) == 0:
+                each_env_pcd_pos = pcd_pos.unsqueeze(0)
                 if idx == 0:
-                    pcd_tensors = pcd_tensor
+                    pcd_tensors = each_env_pcd_pos
                 else:
-                    pcd_tensors = torch.cat((pcd_tensors, pcd_tensor), dim=0)
+                    pcd_tensors = torch.cat((pcd_tensors, each_env_pcd_pos), dim=0)
 
         return pcd_tensors
     
 
-    def _sampling_pcd(self,
-                      pcd_pos,
-                      pcd_normal,
-                      pcd_semantic,
-                      idx: int) -> np.array:
+    def _normalize_pcd(self,        # also conduct sampling
+                       idx: int,
+                       pcd_pos,
+                       pcd_semantic,
+                       num_samples: int
+                       ) -> torch.Tensor:
         semantics = torch.unique(pcd_semantic)
+        print(f'semantics: {semantics}')
         for idx in range(semantics.shape[0]):
             print(f'idx: {idx}, semantic: {semantics[idx]}')
             index = torch.unique(pcd_semantic)[idx]
@@ -223,42 +220,56 @@ class PointcloudWriter(Writer):
             pcd_mean = torch.mean(pcd, axis=0)
             pcd_mean = torch.unsqueeze(pcd_mean, dim=0)
 
-            pcd_mean_xyz = pcd_mean.repeat(pcd.shape[0], 1)
-            normalized_pcd = pcd - pcd_mean_xyz
+            # device_num = torch.cuda.current_device()
+            # device = o3d.core.Device(f"{self.device}:{device_num}")
+
+            # 일반적인 o3d는 cpu에 올려져 있는데, tensor로 바꿔주기 위헤 아래와 같이 타입을 바꿔준다.
+            o3d_tensor = o3c.Tensor.from_dlpack(torch.utils.dlpack.to_dlpack(pcd))
+            o3d_pcd_tensor = o3d.t.geometry.PointCloud(o3d_tensor)
+            o3d_downsampled_pcd = o3d_pcd_tensor.farthest_point_down_sample(num_samples)
+            # TODO: 150개로 sampling하면 150개가 아닌 경우가 있음. 확인 필요. upsampling 없나....
+            # TODO: 함수의 입력으로 받은 pcd_semantic도 같은 개수에 맞춰 내보내야 함. 현재(240116)로썬 안쓰긴 함.
+            ######  for문 돌려서 하는거니까 그냥 150개 뽑아서 같이 묶어 내보내면 된다.
+            downsampled_points = o3d_downsampled_pcd.point
+            torch_tensor_points = torch.utils.dlpack.from_dlpack(downsampled_points.positions.to_dlpack())
+
+
+            pcd_mean_xyz = pcd_mean.repeat(torch_tensor_points.shape[0], 1)
+            normalized_pcd = torch_tensor_points - pcd_mean_xyz
+            # normalized_pcd = normalized_pcd.unsqueeze(0)
             if idx == 0:
                 normalized_pcds = normalized_pcd
-                pcd_means = pcd_mean
             if idx != 0:
                 normalized_pcds = torch.concat((normalized_pcds, normalized_pcd), axis=0)
-                pcd_means = torch.concat((pcd_means, pcd_mean), axis=0)
-
-        return normalized_pcd, pcd_means
+        
+        # normalized_pcds = normalized_pcds.to(self.device)
+        return normalized_pcds
 
 
     
-    def _normalize_pcd(self,
-                       pcd_pos,
-                       pcd_normal,
-                       pcd_semantic,
-                       pcd_means,
-                       idx: int) -> np.array:
+    # def _normalize_pcd(self,
+    #                    idx,
+    #                    pcd_pos,
+    #                    pcd_semantic,
+    #                 #    pcd_means,
+    #                    ) -> np.array:
 
-        semantics = torch.unique(pcd_semantic)
-        for idx in range(semantics.shape[0]):
-            # print(f'idx: {idx}, semantic: {semantics[idx]}')
-            index = torch.unique(pcd_semantic)[idx]
-            pcd_idx = torch.where(pcd_semantic==index)[0]
-            pcd = pcd_pos[pcd_idx]
-            pcd_mean = torch.mean(pcd, axis=0)
-            pcd_mean = torch.unsqueeze(pcd_mean, dim=0)
-            pcd_mean_xyz = pcd_mean.repeat(pcd.shape[0], 1)
-            normalized_pcd = pcd - pcd_mean_xyz
-            if idx == 0:
-                normalized_pcds = normalized_pcd
-            if idx != 0:
-                normalized_pcds = torch.concat((normalized_pcds, normalized_pcd), axis=0)
+    #     semantics = torch.unique(pcd_semantic)
+    #     for idx in range(semantics.shape[0]):
+    #         # print(f'idx: {idx}, semantic: {semantics[idx]}')
+    #         index = torch.unique(pcd_semantic)[idx]
+    #         pcd_idx = torch.where(pcd_semantic==index)[0]
+    #         pcd = pcd_pos[pcd_idx]
+    #         pcd_mean = torch.mean(pcd, axis=0)
+    #         pcd_mean = torch.unsqueeze(pcd_mean, dim=0)
+    #         pcd_mean_xyz = pcd_mean.repeat(pcd.shape[0], 1)
+    #         normalized_pcd = pcd - pcd_mean_xyz
+    #         if idx == 0:
+    #             normalized_pcds = normalized_pcd
+    #         if idx != 0:
+    #             normalized_pcds = torch.concat((normalized_pcds, normalized_pcd), axis=0)
 
-        return normalized_pcd
+    #     return normalized_pcd
     
     def _visualize_pointcloud(self, idx, env_pos, pcd_data: dict) -> None:
         '''
@@ -269,6 +280,11 @@ class PointcloudWriter(Writer):
             print('pcd_data is not defined')
             print('Do you mean data[annotator]?')
         
+            
+        pcd_np = pcd_pos.detach().cpu().numpy()
+        pcd_semantic = pcd_semantic.detach().cpu().numpy()
+        env_pos = self.env_pos
+        idx = 0
         '''
 
         pcd_np = pcd_data['data']    # get point cloud data as numpy array
@@ -310,6 +326,7 @@ class PointcloudWriter(Writer):
             index = np.unique(pcd_semantic)[idx]
             pcd_idx = np.where(pcd_semantic==index)[0]
             pcd = pcd_np[pcd_idx]
+            print(f'pcd shape: {pcd.shape}')
             point_cloud = o3d.geometry.PointCloud()
             point_cloud.points = o3d.utility.Vector3dVector(pcd)
             o3d.visualization.draw_geometries([point_cloud],
