@@ -171,30 +171,16 @@ class PointcloudWriter(Writer):
                 # torch_tensor_points = torch.utils.dlpack.from_dlpack(downsampled_points.positions.to_dlpack())
 
 
-                if self.pcd_normalize:
-                    pcd_pos = self._normalize_pcd(          # also conduct sampling
-                                                  idx,
-                                                  pcd_pos,
-                                                  pcd_semantic,
-                                                  num_samples,
-                                                  )
-
-                # TODO: 여기에서 얻은 pcd에 대해 normal vector를 얻어야 한다.
-                # for i  in torch.unique(pcd_semantic):
-                #     pcd_idx = torch.where(pcd_semantic==i)[0]
-                #     pcd_mask = pcd_pos[pcd_idx]
-                #     # TODO: 여기에서 pcd mask별 normalize 진행
-
-
-                # # sampling point cloud for making same size
-                # o3d_org_point_cloud.points = v3d(pcd_np)
-                # o3d_downsampled_pcd = o3d_org_point_cloud.farthest_point_down_sample(num_samples)
-                # pcd_sampled = np.asarray(o3d_downsampled_pcd.points)
-
-                # pcd_tensor = torch.from_numpy(pcd_sampled).unsqueeze(0).to(self.device)
-                # # pcd_tensor = torch.from_numpy(pcd_sampled).to(self.device)
-
-                # if int(idx.split('_')[-1]) == 0:
+                # if self.pcd_normalize:
+                pcd_pos = self._normalize_sampling_pcd(          # also conduct sampling
+                                                        idx,
+                                                        pcd_pos,
+                                                        pcd_semantic,
+                                                        num_samples,
+                                                        self.pcd_normalize,
+                                                        )
+                # TODO: 여기에서 얻은 pcd에 대해 normal vector를 추가하는 것을 고려
+                    
                 each_env_pcd_pos = pcd_pos.unsqueeze(0)
                 if idx == 0:
                     pcd_tensors = each_env_pcd_pos
@@ -204,12 +190,13 @@ class PointcloudWriter(Writer):
         return pcd_tensors
     
 
-    def _normalize_pcd(self,        # also conduct sampling
-                       idx: int,
-                       pcd_pos,
-                       pcd_semantic,
-                       num_samples: int
-                       ) -> torch.Tensor:
+    def _normalize_sampling_pcd(self,        # also conduct sampling
+                                idx: int,
+                                pcd_pos,
+                                pcd_semantic,
+                                num_samples: int,
+                                normalize: bool,
+                                ) -> torch.Tensor:
         semantics = torch.unique(pcd_semantic)
         print(f'semantics: {semantics}')
         for idx in range(semantics.shape[0]):
@@ -217,8 +204,6 @@ class PointcloudWriter(Writer):
             index = torch.unique(pcd_semantic)[idx]
             pcd_idx = torch.where(pcd_semantic==index)[0]
             pcd = pcd_pos[pcd_idx]
-            pcd_mean = torch.mean(pcd, axis=0)
-            pcd_mean = torch.unsqueeze(pcd_mean, dim=0)
 
             # device_num = torch.cuda.current_device()
             # device = o3d.core.Device(f"{self.device}:{device_num}")
@@ -233,17 +218,22 @@ class PointcloudWriter(Writer):
             downsampled_points = o3d_downsampled_pcd.point
             torch_tensor_points = torch.utils.dlpack.from_dlpack(downsampled_points.positions.to_dlpack())
 
+            if normalize:
+                pcd_mean = torch.mean(pcd, axis=0)
+                pcd_mean = torch.unsqueeze(pcd_mean, dim=0)
+                pcd_mean_xyz = pcd_mean.repeat(torch_tensor_points.shape[0], 1)
+                point_cloud = torch_tensor_points - pcd_mean_xyz    # normalize
+            else:
+                point_cloud = torch_tensor_points
 
-            pcd_mean_xyz = pcd_mean.repeat(torch_tensor_points.shape[0], 1)
-            normalized_pcd = torch_tensor_points - pcd_mean_xyz
             # normalized_pcd = normalized_pcd.unsqueeze(0)
             if idx == 0:
-                normalized_pcds = normalized_pcd
+                point_clouds = point_cloud
             if idx != 0:
-                normalized_pcds = torch.concat((normalized_pcds, normalized_pcd), axis=0)
+                point_clouds = torch.concat((point_clouds, point_cloud), axis=0)
         
         # normalized_pcds = normalized_pcds.to(self.device)
-        return normalized_pcds
+        return point_clouds
 
 
     
