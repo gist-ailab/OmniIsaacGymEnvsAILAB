@@ -13,7 +13,6 @@ from omniisaacgymenvs.robots.articulations.ur5e_tool import UR5eTool
 from omniisaacgymenvs.robots.articulations.views.ur5e_view import UR5eView
 from omniisaacgymenvs.tasks.utils.pcd_writer import PointcloudWriter
 from omniisaacgymenvs.tasks.utils.pcd_listener import PointcloudListener
-from omni.replicator.isaac.scripts.writers.pytorch_listener import PytorchListener
 from omni.isaac.core.utils.semantics import add_update_semantics
 
 import omni
@@ -51,7 +50,6 @@ class MovingTargetTask(RLTask):
         self.rep = rep
         self.camera_width = 640
         self.camera_height = 640
-        self.pytorch_listener = PytorchListener
         #################### BSH
 
         self.update_config(sim_config)
@@ -80,11 +78,19 @@ class MovingTargetTask(RLTask):
         self._pcd_sampling_num = self._task_cfg["sim"]["point_cloud_samples"]
         
         # observation and action space
-        # self._num_observations = self._pcd_sampling_num * 3 * self._num_envs
-        self._num_observations = self._pcd_sampling_num * 2
-        # 2은 sub mask 총 개수
-        # TODO: robot state가 추가될 경우, 위 수식 수정
-        # TODO: 위에서 숫자 3은 point cloud의 sub mask 개수를 의미함. 이를 state 또는 config에서 받아올 것.
+        pcd_observations = self._pcd_sampling_num * 2 * 3     # 2 is a number of point cloud masks and 3 is a cartesian coordinate
+        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 3 + 3
+        '''
+        refer to observations in get_observations()
+        dof_pos_scaled,                               # [NE, 6]
+        dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
+        flange_pos,                                   # [NE, 3]
+        flange_rot,                                   # [NE, 4]
+        target_pos,                                   # [NE, 3]
+        goal_pos,                                     # [NE, 3]
+        
+        '''
+        # TODO: point cloud의 sub mask 개수를 state 또는 config에서 받아올 것.
 
         if self._control_space == "joint":
             self._num_actions = 6
@@ -258,7 +264,7 @@ class MovingTargetTask(RLTask):
         self.pointcloud_writer.attach(self.render_products)
         ################################################################################## 231121 added BSH
             
-        # # get target object semantic data
+        # # get robot semantic data
         # # 그런데 어짜피 로봇 point cloud는 필요 없기 때문에 안 받아도 될듯
         # self._robot_semantics = {}
         # for i in range(self._num_envs):
@@ -452,88 +458,29 @@ class MovingTargetTask(RLTask):
 
 
     def get_observations(self) -> dict:
-        # async def get_point_cloud(point_cloud, lidar_prim_path):            
-        #     pointcloud = self.lidarInterface.get_point_cloud(lidar_prim_path)
-        #     semantics = self.lidarInterface.get_semantic_data(lidar_prim_path)
-        #     print("Semantics", np.unique(semantics))
-        '''Consider async when train with multiple envs point cloud'''
-
-        ##### 231121 added BSH
-        # retrieve RGB data from all render products
-        # images = self.pytorch_listener.get_rgb_data()
         ''' retrieve point cloud data from all render products '''
         # tasks/utils/pcd_writer.py 에서 pcd sample하고 tensor로 변환해서 가져옴
         pointcloud = self.pointcloud_listener.get_pointcloud_data()
-        
-        # if images is not None:
-        #     from torchvision.utils import save_image, make_grid
 
-        #     img = images/255
-        #     save_image(make_grid(img, nrows = 2), 'moving_target.png')
+        '''
+        아래 순서로 최종 obs_buf에 concat. 첫 차원은 환경 갯수
+        1. robot dof position
+        2. robot dof velocity
+        3. flange position
+        4. flange orientation
+        5. target position => 이건 pointcloud_listener에서 받아와야 할듯? pcd 평균으로 하자
+        6. goal position
 
-        robot_dof_pos = self._robots.get_joint_positions(clone=False)
-        robot_dof_vel = self._robots.get_joint_velocities(clone=False)
-        # print(f'\nrobot_dof_pos:\n{robot_dof_pos}\n')
-        # print(f'robot_dof_vel:\n {robot_dof_vel}')
+
+        '''
+
+        robot_dof_pos = self._robots.get_joint_positions(clone=False)[:, 0:6]   # get robot dof position from 1st to 6th joint
+        robot_dof_vel = self._robots.get_joint_velocities(clone=False)[:, 0:6]  # get robot dof velocity from 1st to 6th joint
+        # rest of the joints are not used for control. They are fixed joints at each episode.
 
         flange_pos, flange_rot = self._flanges.get_local_poses()
-        target_pos, target_rot = self._targets.get_local_poses()
+        target_pos, target_rot = self._targets.get_local_poses()    # TODO: 물체의 pose는 명시적인 것이 아닌, pcd를 이용하도록 하자.
         goal_pos, goal_rot = self._goals.get_local_poses()
-
-        
-
-
-        # ############# visualize point cloud #################
-        # point_cloud_data = pointcloud['env_0']['data']
-        # v3d = o3d.utility.Vector3dVector
-        # # get original point cloud
-        # o3d_org_point_cloud = o3d.geometry.PointCloud()
-        # o3d_org_point_cloud.points = v3d(point_cloud_data)
-        # o3d.visualization.draw_geometries([o3d_org_point_cloud],
-        #                                   window_name='origial_point cloud')
-
-        '''get sampled point cloud'''
-        # target_radius = np.linalg.norm(point_cloud_data.max(0) - point_cloud_data.min(0)) * 0.02
-        # idx = pcu.downsample_point_cloud_poisson_disk(point_cloud_data,
-        #                                               target_num_samples=int(0.3*point_cloud_data.shape[0]),
-        #                                               radius=target_radius)
-        # point_cloud_data_sampled = point_cloud_data[idx]
-        # sampled_pcd = o3d.geometry.PointCloud()
-        # sampled_pcd.points = v3d(point_cloud_data_sampled)
-        # o3d.visualization.draw_geometries([sampled_pcd],
-        #                                   window_name='sampled point cloud')
-        # ############# visualize point cloud #################
-
-
-        # # TODO: get point cloud of the tool from lidar
-        # for i in range(self._num_envs):
-        #     point_cloud = pointcloud[f'env_{i}']['data']
-        #     semantic = self._point_cloud[i]._lidar_sensor_interface.get_prim_data(lidar_prim_path)
-
-        #     pcd = np.reshape(point_cloud, (point_cloud.shape[0]*point_cloud.shape[1], 3))
-        #     pcd_semantic = np.reshape(semantic, -1)
-
-        #     index = np.unique(pcd_semantic)[-1]
-        #     tool_pcd_idx = np.where(pcd_semantic==index)[0]
-        #     tool_pcd = pcd[tool_pcd_idx]
-
-        #     tool_pcd_tensor = torch.from_numpy(tool_pcd).to(self._device)
-        #     # print(tool_pcd_tensor.shape)
-
-        #     '''
-        #     현재 쓰고있는 obs_buf에 point cloud를 넣으려면 일정 수 만큼 sampling 해서 넣어야 할듯
-        #     허나, 그 전에 한번 feature extraction을 해서 넣어야 할듯
-        #     '''
-        #     # # visulaize tool point cloud
-        #     # tool_point_cloud = o3d.geometry.PointCloud()
-        #     # tool_point_cloud.points = o3d.utility.Vector3dVector(tool_pcd)
-        #     # o3d.visualization.draw_geometries([tool_point_cloud],
-        #     #                                   window_name='tool point cloud')
-
-        #     # # visualize point cloud with lidar frame
-        #     # for i in range(self.num_envs):
-        #     #     self.visualize_point_cloud(view_idx = i,
-        #     #                             lidar_position = np.array([0.35, 0.5, 0.4]))
 
 
         if self.previous_target_position == None:
@@ -547,6 +494,7 @@ class MovingTargetTask(RLTask):
 
         # compute distance for calculate_metrics() and is_done()
         # TOOD: 기존에는 물체와 tool 사이의 거리를 계산했으나, point cloud에서는 좀 다른 방식을 생각해봐야 할 것 같다.
+        # TODO: 아래에는 명시적인 것이 아닌 pcd의 평균을 이용하여 계산토록 하자.
         if self.previous_tool_target_distance == None:
             self.current_tool_target_distance = LA.norm(flange_pos - target_pos, ord=2, dim=1)
             self.previous_tool_target_distance = self.current_tool_target_distance
@@ -559,8 +507,10 @@ class MovingTargetTask(RLTask):
             self.current_tool_target_distance = LA.norm(flange_pos - target_pos, ord=2, dim=1)
             self.current_target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
 
-        dof_pos_scaled = 2.0 * (robot_dof_pos - self.robot_dof_lower_limits) \
-            / (self.robot_dof_upper_limits - self.robot_dof_lower_limits) - 1.0
+        robot_body_dof_lower_limits = self.robot_dof_lower_limits[:6]
+        robot_body_dof_upper_limits = self.robot_dof_upper_limits[:6]
+        dof_pos_scaled = 2.0 * (robot_dof_pos - robot_body_dof_lower_limits) \
+            / (robot_body_dof_upper_limits - robot_body_dof_lower_limits) - 1.0
         dof_vel_scaled = robot_dof_vel * self._dof_vel_scale
 
         generalization_noise = torch.rand((dof_vel_scaled.shape[0], 6), device=self._device) + 0.5
@@ -576,24 +526,18 @@ class MovingTargetTask(RLTask):
         pointcloud: [NE, N, 3]
         '''
         self.obs_buf = pointcloud.view([pointcloud.shape[0], -1])   # [NE, N*3]
-        # TODO: observation에 robot state 도 같이 껴서 넣어도 될듯
-        
-        
+        self.obs_buf = torch.cat((pointcloud.view([pointcloud.shape[0], -1]),   # [NE, N*3]
+                                  dof_pos_scaled,                               # [NE, 6]
+                                  dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
+                                  flange_pos,                                   # [NE, 3]
+                                  flange_rot,                                   # [NE, 4]
+                                  target_pos,                                   # [NE, 3]
+                                  goal_pos,                                     # [NE, 3]
+                                  ), dim=1)
         # self.obs_buf[:, 0] = self.progress_buf / self._max_episode_length
         # # 위에 있는게 꼭 들어가야 할까??? 없어도 될 것 같은데....
-        # self.obs_buf[:, 1:7] = dof_pos_scaled[:, :6]
-        # self.obs_buf[:, 7:13] = dof_vel_scaled[:, :6] * generalization_noise
-        # self.obs_buf[:, 13:16] = flange_pos
-        # self.obs_buf[:, 16:19] = target_pos
-        # self.obs_buf[:, 19:22] = goal_pos
         
         # self._env_pos is the position of the each environment. It comse from RLTask.
-
-        # compute distance for calculate_metrics() and is_done()
-        # self._computed_tool_target_distance = LA.norm(tip_pos - target_pos, ord=2, dim=1)
-        # self._computed_target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
-
-
 
         if self._control_space == "cartesian":
             self.jacobians = self._robots.get_jacobians(clone=False)
