@@ -47,13 +47,13 @@ class TransformerEnc(nn.Module):
                                                       num_layers=num_layers,
                                                       norm=nn.LayerNorm(input_dim))
         
-        self.attention_pooling = AttentionPooling(embed_dim=input_dim,
-                                                  num_heads=attention_num_heads,
-                                                  latent_dim=attention_hidden_dim)
+        # self.attention_pooling = AttentionPooling(embed_dim=input_dim,
+        #                                           num_heads=attention_num_heads,
+        #                                           latent_dim=attention_hidden_dim)
 
-        self.output_projection = Linear(input_dim, output_feature)
+        # self.output_projection = Linear(input_dim, output_feature)
         
-        self.feature_projection = Linear(encoder_hidden_dim, 5)
+        # self.feature_projection = Linear(encoder_hidden_dim, 5)
         
         # projection from hidden dimension to 1 dimension for regression. output has a only one feature
 
@@ -90,8 +90,8 @@ class TransformerEnc(nn.Module):
         encoder_output = self.transformer_encoder(src)  # src shape: [batch_size, enc_seq_len, dim_val]
 
         encoder_output = self.dropout(encoder_output)
-        pooling_output = self.attention_pooling(encoder_output)
+        # pooling_output = self.attention_pooling(encoder_output)
+        # output = self.output_projection(pooling_output)
 
-        output = self.output_projection(pooling_output)
-
-        return output
+        # return output
+        return encoder_output
