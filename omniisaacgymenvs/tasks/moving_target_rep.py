@@ -509,6 +509,8 @@ class MovingTargetTask(RLTask):
 
         robot_body_dof_lower_limits = self.robot_dof_lower_limits[:6]
         robot_body_dof_upper_limits = self.robot_dof_upper_limits[:6]
+
+        # the scaler below comes from the CabinetTask
         dof_pos_scaled = 2.0 * (robot_dof_pos - robot_body_dof_lower_limits) \
             / (robot_body_dof_upper_limits - robot_body_dof_lower_limits) - 1.0
         dof_vel_scaled = robot_dof_vel * self._dof_vel_scale
