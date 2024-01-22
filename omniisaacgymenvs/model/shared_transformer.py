@@ -4,6 +4,7 @@ from skrl.models.torch import DeterministicMixin, GaussianMixin, Model
 from omniisaacgymenvs.model.common import init_network
 from omniisaacgymenvs.model.transformer_enc import TransformerEnc
 from omniisaacgymenvs.algos.feature_extractor import PointCloudExtractor
+from omniisaacgymenvs.model.attention import AttentionPooling
 
 # TODO: 여기에서는 point2를 통해 만든 feature를 받아서, 그것을 shared model에 넣어서 action을 만들어야 한다.
 
@@ -27,7 +28,9 @@ class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
                       "fps_deterministic": False,
                       "pos_in_feature": False,
                       "normalize_pos": True,
-                      "normalize_pos_param": None
+                      "normalize_pos_param": None,
+                      "attention_num_heads": 8,
+                      "attention_hidden_dim": 64,
                       }
         
         for i in range(pcd_config["num_pcd_masks"]):
@@ -35,16 +38,36 @@ class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
         # TODO: 나중에는 PointCloudExtractor를 사용하여 더 고도화된 feature extractor를 사용해야 함.
         # from omniisaacgymenvs.algos.feature_extractor import PointCloudExtractor
         
+        transformer_input_dim = 128
+        projection_output_dim = 64
 
-        self.net = TransformerEnc(
-                                  input_dim=128,        # 이걸 pcd_config 넣어서 pcd랑 변수 맞추면 좋을 듯
-                                  output_feature=64,    # 아래의 mean_layer, value_layer의 input dim과 변수 맞추면 좋을 듯
-                                  )
+        self.combine_pcd_robot_state = True
 
-        self.mean_layer = nn.Linear(64, self.num_actions)
+        self.robot_state_layer = nn.Linear(25, transformer_input_dim) # TODO: robot state개수 25를 config에서 받아와야 함.
+        self.transformer_enc = TransformerEnc(
+                                              input_dim=transformer_input_dim,  # 이걸 pcd_config 넣어서 pcd랑 변수 맞추면 좋을 듯
+                                              #   output_feature=transformer_output_dim,    # 아래의 mean_layer, value_layer의 input dim과 변수 맞추면 좋을 듯
+                                              )
+        
+        self.attention_pooling = AttentionPooling(embed_dim=transformer_input_dim,
+                                                  num_heads=pcd_config['attention_num_heads'],
+                                                  latent_dim=pcd_config['attention_hidden_dim'])
+
+
+        self.linear_projection = nn.Linear(transformer_input_dim, projection_output_dim)
+
+        self.att_linear_projection = nn.Sequential(
+                                                   AttentionPooling(embed_dim=transformer_input_dim,
+                                                                    num_heads=pcd_config['attention_num_heads'],
+                                                                    latent_dim=pcd_config['attention_hidden_dim']),
+                                                   nn.ELU(),
+                                                   nn.Linear(transformer_input_dim, projection_output_dim),
+                                                   nn.ELU(),
+                                                  )
+
+        self.mean_layer = nn.Linear(projection_output_dim, self.num_actions)
+        self.value_layer = nn.Linear(projection_output_dim, 1)
         self.log_std_parameter = nn.Parameter(torch.zeros(self.num_actions))
-
-        self.value_layer = nn.Linear(64, 1)
 
     def act(self, inputs, role):
         if role == "policy":
@@ -56,13 +79,16 @@ class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
         '''
         B: batch size,
         N: number of points,
-        F: feature dimension,
+        RS: robot state,
+        F: pcd feature dimension or robot state feature dimension,
+        LF: linear projection feature dimension,
         C: number of sub-masks(channels)
         '''
         num_of_sub_mask = 2 # TODO: 외부 config에서 pcd mask 개수를 받아와야 함.
         N = 90  # number of sampled points
-        pcd_data = inputs["states"] # [B, :]
-        # TODO: 여기에서 pcd와 robot state를 구분. 뒤에서 25개가 robot state, 나머지는 pcd
+        observations = inputs["states"] # [B, N*3 + RS], 3 for x, y, z
+        pcd_data = observations[:, :-25] # [B, N*3]
+        robot_state = observations[:, -25:] # [B, RS]
         # TODO: Transformer에 넣어주기 위해서 robot state를 pcd feature 차원과 맞춰주어야 함. init에 linear layer를 넣어주어야 함.
         '''
         refer to observations in get_observations()
@@ -143,6 +169,7 @@ class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
                 # 원래 코드는 [환경 개수, observation 개수]로 넣어주고 있다.
                 # 나는 [환경 개수, point 개수, point feature]로 넣어주거나 [환경 개수, point mask 개수, mask별 feature]로 넣어주어야 함.
                 # TODO: point feature에 
+
         # pointnet2 input dim:
         # 1: point_feature
         # 2: point_pos -> [num of points, 3]
@@ -150,7 +177,28 @@ class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
         # point_feature = self.pcd_backbone(point_feature, point_pos, batch)
         # TODO: n개의 point_feature를 concat해주어야 함. 이걸 transformer에 넣어 줌.
         # TODO: n개의 point_feature를 만드는 건, pcd_backbone에서 해주어야 함.
+        # TODO: pcd_feature만 transformer에 넣어주는 것과, pcd_feature와 robot state를 concat해서 transformer에 넣어주는 것을 구분해서 실험해보자.
+        if self.combine_pcd_robot_state:
+            # combine pointnet2 feature and robot state feature
+            robot_state_feature = self.robot_state_layer(robot_state)   # [B, RS] => [B, F]
+            robot_state_feature = robot_state_feature.unsqueeze(1)      # [B, F] => [B, 1, F]
+            combined_feature = torch.cat([point_features, robot_state_feature], dim=1)   # [B, N, F] + [B, 1, F] => [B, N+1, F]
+
+            # input the combined feature to transformer
+            pcd_robot_feature = self.transformer_enc(combined_feature)    # [B, N+1, F] => [B, N+1, F]
+        else:
+            # input the pointnet2 feature to transformer
+            point_transformer_features = self.transformer_enc(point_features)   # [B, N, F] => [B, N, F]
+
+            # combine pcd transformer feature and robot state feature
+            robot_state_feature = self.robot_state_layer(robot_state)   # [B, RS] => [B, F]
+            robot_state_feature = robot_state_feature.unsqueeze(1)      # [B, F] => [B, 1, F]
+            pcd_robot_feature = torch.cat([point_transformer_features, robot_state_feature], dim=1)  # [B, N, F] + [B, 1, F] => [B, N+1, F]
+        
+        # attention pooling
+        linear_feature = self.att_linear_projection(pcd_robot_feature)  # [B, N+1, F] => [B, LF]
+        
         if role == "policy":
-            return self.mean_layer(self.net(point_features)), self.log_std_parameter, {}
+            return self.mean_layer(linear_feature), self.log_std_parameter, {}
         elif role == "value":
-            return self.value_layer(self.net(point_features)), {}
+            return self.value_layer(linear_feature), {}
