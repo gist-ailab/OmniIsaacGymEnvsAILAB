@@ -159,10 +159,13 @@ class MovingTargetTask(RLTask):
         
         
         # point cloud view
-        ################################################################################## 231121 added BSH
         self.render_products = []
-        self.rgb_products = []
-        self.camera_positions = {}
+        camera_positions = {0: [2, 1.5, 0.5],
+                            1: [2, -1.3, 0.5],
+                            2: [-1.5, -2.2, 0.5]}
+        camera_rotations = {0: [0, -10, 60],
+                            1: [0, -10, -45],
+                            2: [0, -10, -130]}
         env_pos = self._env_pos.cpu()
 
         # Used to get depth data from the camera
@@ -192,89 +195,81 @@ class MovingTargetTask(RLTask):
             vertical_aperture = 0.135 (cm)
             clipping_range = 0.01 ~ 10 (m)
             '''
-            camera_position = (2 + env_pos[i][0], 1.5 + env_pos[i][1], 0.5)
-            self.camera_positions[i] = camera_position
-            self.camera_orientations = (0, -9, 60)
-            camera = self.rep.create.camera(
-                # position=(0.5 + env_pos[i][0], 1.5 + env_pos[i][1], 0.4),
-                # position=(2 + env_pos[i][0], 1.5 + env_pos[i][1], 0.5),
-                position=camera_position,
-                # position=(0.5 + env_pos[i][0], 0.75 + env_pos[i][1], 0.4),
-                # position=(0.35 + env_pos[i][0], 0.5 + env_pos[i][1], 0.4),
-                # rotation=(0, -9, 90),
-                # rotation=(0, -9, 60),
-                rotation=self.camera_orientations,
+            # pos: (2 -1.3 0.5), ori: (0, -10, -45)
+            # pos: (-1.5 -2.2 0.5), ori: (0, -10, -130)
+            # 
 
-                # focal_length=0.18,
-                # focus_distance=3.86,
-                # horizontal_aperture=0.224,
-                # # vertical_aperture=0.2016,
-                # clipping_range=(0.5, 3.86),
-
-                # focal_length=0.18,
-                # focus_distance=3.86,
-                # horizontal_aperture=0.224,
-                # # vertical_aperture=0.2016,
-                # clipping_range=(0.5, 3.86),
-
-                focal_length=1.8,
-                focus_distance=3.86,
-                horizontal_aperture=2.24,
-                # vertical_aperture=0.2016,
-                clipping_range=(0.5, 3.86),
+            for j in range(3):
+                locals()[f"camera_{j}"] = self.rep.create.camera(
+                                                                 position = (env_pos[i][0] + camera_positions[j][0],
+                                                                             env_pos[i][1] + camera_positions[j][1],
+                                                                             env_pos[i][2] + camera_positions[j][2]),
+                                                                 rotation=(camera_rotations[j][0],
+                                                                           camera_rotations[j][1],
+                                                                           camera_rotations[j][2]), 
+                                                                 focal_length=1.8,
+                                                                 focus_distance=3.86,
+                                                                 horizontal_aperture=2.24,
+                                                                 #  vertical_aperture=0.2016,
+                                                                 clipping_range=(0.5, 3.86),
+                                                                 # TODO: clipping range 조절해서 환경이 서로 안 겹치게 하자.
+                                                                 )
                 
-                # focal_length=0.23,
-                # focus_distance=5,
-                # horizontal_aperture=0.24,
-                # # vertical_aperture=0.135,
-                # clipping_range=(0.01, 10),
-                )
-            # TODO: camera parameter를 알맞게 입력해야 함.
-            render_product = self.rep.create.render_product(camera, resolution=(self.camera_width, self.camera_height))
-            rgb_product = self.rep.create.render_product(camera, resolution=(self.camera_width, self.camera_height))
+                render_product = self.rep.create.render_product(locals()[f"camera_{j}"], resolution=(self.camera_width, self.camera_height))
+                self.render_products.append(render_product)
+
+            # camera_position = (2 + env_pos[i][0], 1.5 + env_pos[i][1], 0.5)
+            # self.camera_positions[i] = camera_position
+            # self.camera_1_orientations = (0, -10, 60)
+            # # self.camera_orientations = (0, 0, 60)
+            # camera = self.rep.create.camera(
+            #     # position=(0.5 + env_pos[i][0], 1.5 + env_pos[i][1], 0.4),
+            #     # position=(2 + env_pos[i][0], 1.5 + env_pos[i][1], 0.5),
+            #     position=self.camera_positions,
+            #     rotation=self.camera_orientations,
+
+            #     focal_length=1.8,
+            #     focus_distance=3.86,
+            #     horizontal_aperture=2.24,
+            #     # vertical_aperture=0.2016,
+            #     clipping_range=(0.5, 3.86),
+                
+            #     )
+            # render_product = self.rep.create.render_product(camera, resolution=(self.camera_width, self.camera_height))
             # distance_to_camera = self.rep.AnnotatorRegistry.get_annotator("distance_to_camera")
             # distance_to_image_plane = self.rep.AnnotatorRegistry.get_annotator("distance_to_image_plane")
             # pointcloud = self.rep.AnnotatorRegistry.get_annotator("pointcloud")
 
-            self.render_products.append(render_product)
-            self.rgb_products.append(rgb_product)
+            # self.render_products.append(render_product)
 
-
-        ### 231121 added BSH
         # start replicator to capture image data
         self.rep.orchestrator._orchestrator._is_started = True
 
         # initialize pytorch writer for vectorized collection
-        # self.pytorch_listener = self.PytorchListener()
-        # self.pytorch_writer = self.rep.WriterRegistry.get("PytorchWriter")
-        # self.pytorch_writer.initialize(listener=self.pytorch_listener,
-        #                                 device="cuda",
-        #                                 )
-        # self.pytorch_writer.attach(self.rgb_products)
         self.pointcloud_listener = self.PointcloudListener()
         self.pointcloud_writer = self.rep.WriterRegistry.get("PointcloudWriter")
         self.pointcloud_writer.initialize(listener=self.pointcloud_listener,
                                           pcd_sampling_num=self._pcd_sampling_num,
                                           pcd_normalize = self._pcd_normalization,
                                           env_pos = self._env_pos.cpu(),
-                                          camera_positions=self.camera_positions,
-                                          camera_orientations=self.camera_orientations,
+                                          camera_positions=camera_positions,
+                                          camera_orientations=camera_rotations,
                                           device=self.device,
                                           )
         self.pointcloud_writer.attach(self.render_products)
         ################################################################################## 231121 added BSH
             
-        # # get robot semantic data
-        # # 그런데 어짜피 로봇 point cloud는 필요 없기 때문에 안 받아도 될듯
-        # self._robot_semantics = {}
-        # for i in range(self._num_envs):
-        #     robot_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/robot")
-        #     self._robot_semantics[i] = Semantics.SemanticsAPI.Apply(robot_prim, "Semantics")
-        #     self._robot_semantics[i].CreateSemanticTypeAttr()
-        #     self._robot_semantics[i].CreateSemanticDataAttr()
-        #     self._robot_semantics[i].GetSemanticTypeAttr().Set("class")
-        #     self._robot_semantics[i].GetSemanticDataAttr().Set(f"robot_{i}")
-        #     add_update_semantics(robot_prim, '0')
+        # get robot semantic data
+        # 그런데 어짜피 로봇 point cloud는 필요 없기 때문에 안 받아도 될듯
+        self._robot_semantics = {}
+        for i in range(self._num_envs):
+            robot_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/robot")
+            self._robot_semantics[i] = Semantics.SemanticsAPI.Apply(robot_prim, "Semantics")
+            self._robot_semantics[i].CreateSemanticTypeAttr()
+            self._robot_semantics[i].CreateSemanticDataAttr()
+            self._robot_semantics[i].GetSemanticTypeAttr().Set("class")
+            self._robot_semantics[i].GetSemanticDataAttr().Set(f"robot_{i}")
+            add_update_semantics(robot_prim, '0')
 
 
         # get tool semantic data
@@ -461,6 +456,7 @@ class MovingTargetTask(RLTask):
         ''' retrieve point cloud data from all render products '''
         # tasks/utils/pcd_writer.py 에서 pcd sample하고 tensor로 변환해서 가져옴
         pointcloud = self.pointcloud_listener.get_pointcloud_data()
+        # TODO: pointcloud로부터 각 환경의 cube 위치를 가져와야 한다.
 
         '''
         아래 순서로 최종 obs_buf에 concat. 첫 차원은 환경 갯수
@@ -470,8 +466,6 @@ class MovingTargetTask(RLTask):
         4. flange orientation
         5. target position => 이건 pointcloud_listener에서 받아와야 할듯? pcd 평균으로 하자
         6. goal position
-
-
         '''
 
         robot_dof_pos = self._robots.get_joint_positions(clone=False)[:, 0:6]   # get robot dof position from 1st to 6th joint
@@ -517,25 +511,18 @@ class MovingTargetTask(RLTask):
 
         generalization_noise = torch.rand((dof_vel_scaled.shape[0], 6), device=self._device) + 0.5
 
-
-        # make new obs_buf into different dimension for point cloud
-        # it originally define at RLTask
-        # self.obs_buf = torch.zeros((self._num_envs, self.num_observations, 3), device=self._device, dtype=torch.float)
-        # self.obs_buf = pointcloud
-
         '''
         NE: number of environmet, N: number of points, F: feature dimension, 3: x, y, z
         pointcloud: [NE, N, 3]
         '''
-        self.obs_buf = pointcloud.view([pointcloud.shape[0], -1])   # [NE, N*3]
-        self.obs_buf = torch.cat((pointcloud.view([pointcloud.shape[0], -1]),   # [NE, N*3]
-                                  dof_pos_scaled,                               # [NE, 6]
-                                  dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
-                                  flange_pos,                                   # [NE, 3]
-                                  flange_rot,                                   # [NE, 4]
-                                  target_pos,                                   # [NE, 3]
-                                  goal_pos,                                     # [NE, 3]
-                                  ), dim=1)
+        self.obs_buf = torch.cat((pointcloud.view([pointcloud.shape[0], -1]),   # [NE, N*3], point cloud
+                                dof_pos_scaled,                               # [NE, 6]
+                                dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
+                                flange_pos,                                   # [NE, 3]
+                                flange_rot,                                   # [NE, 4]
+                                target_pos,                                   # [NE, 3]
+                                goal_pos,                                     # [NE, 3]
+                                ), dim=1)
         # self.obs_buf[:, 0] = self.progress_buf / self._max_episode_length
         # # 위에 있는게 꼭 들어가야 할까??? 없어도 될 것 같은데....
         
@@ -705,3 +692,4 @@ class MovingTargetTask(RLTask):
         self.reset_buf = torch.where(self.current_target_goal_distance <= 0.025, torch.ones_like(self.reset_buf), self.reset_buf)
         # max episode length
         self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
+
