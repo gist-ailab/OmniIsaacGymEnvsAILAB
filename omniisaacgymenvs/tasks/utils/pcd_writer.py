@@ -136,12 +136,6 @@ class PointcloudWriter(Writer):
 
         # TODO: for문 말고 matrix화 시킬 수 있다면 한번 시도를....
         num_samples = self.pcd_sampling_num
-        # v3d = o3d.utility.Vector3dVector
-        # o3d_org_point_cloud = o3d.geometry.PointCloud()
-
-        # device_num = torch.cuda.current_device()
-        # device = o3d.core.Device(f"{self.device}:{device_num}")
-        # o3d_t_org_point_cloud = o3d.t.geometry.PointCloud(device)
 
         for annotator in data.keys():
             if annotator.startswith("pointcloud"):
@@ -162,8 +156,15 @@ class PointcloudWriter(Writer):
                 pcd_pos = pcd_pos.unsqueeze(0)
                 pcd_normal = pcd_normal.unsqueeze(0)
                 pcd_semantic = pcd_semantic.unsqueeze(0)
-                
-                if idx == 0:
+
+                if idx%3 == 0:
+                    # raw point cloud pose values are calculated with respect to the origin of the entire environment
+                    # so, you need to subtract the origin of each environment
+                    env_index = idx//3
+                    env_center = self.env_pos[env_index].to(self.device)
+                    pcd_pos = torch.sub(pcd_pos, env_center)               
+
+                    # save pcd_pos and pcd_semantic for the first on each env pcd pos
                     each_env_pcd_pos = pcd_pos
                     each_env_pcd_semantic = pcd_semantic
                 elif (idx+1)%3 == 0:
@@ -178,16 +179,19 @@ class PointcloudWriter(Writer):
                     sampled_pcd_pos = sampled_pcd_pos.unsqueeze(0)
                     if idx == 2:
                         pcd_pos_tensors = sampled_pcd_pos
-                        # 이젠 semantic 별로 pcd를 sampling 했으니까, semantic은 concat할 필요 없음
+                        # you don't need to concat pcd_semantic because you already sampled pcd by semantic
                     else:
                         pcd_pos_tensors = torch.cat((pcd_pos_tensors, sampled_pcd_pos), dim=0)
+                        # you don't need to concat pcd_semantic because you already sampled pcd by semantic
                 else:
+                    # substract env center from pcd_pos
+                    pcd_pos = torch.sub(pcd_pos, env_center)      
+
                     # concat pcd that is in same the env
                     each_env_pcd_pos = torch.cat((each_env_pcd_pos, pcd_pos), dim=1)
                     each_env_pcd_semantic = torch.cat((each_env_pcd_semantic, pcd_semantic), dim=1)
 
         return pcd_pos_tensors
-    
 
     def _normalize_sampling_pcd(self,        # also conduct sampling
                                 idx: int,
