@@ -210,8 +210,9 @@ class MovingTargetTask(RLTask):
                                                                  focal_length=1.8,
                                                                  focus_distance=3.86,
                                                                  horizontal_aperture=2.24,
-                                                                 #  vertical_aperture=0.2016,
-                                                                 clipping_range=(0.5, 3.86),
+                                                                 # vertical_aperture=0.2016,
+                                                                 # clipping_range=(0.5, 3.86),
+                                                                 clipping_range=(0.5, 3),
                                                                  # TODO: clipping range 조절해서 환경이 서로 안 겹치게 하자.
                                                                  )
                 
@@ -259,17 +260,17 @@ class MovingTargetTask(RLTask):
         self.pointcloud_writer.attach(self.render_products)
         ################################################################################## 231121 added BSH
             
-        # get robot semantic data
-        # 그런데 어짜피 로봇 point cloud는 필요 없기 때문에 안 받아도 될듯
-        self._robot_semantics = {}
-        for i in range(self._num_envs):
-            robot_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/robot")
-            self._robot_semantics[i] = Semantics.SemanticsAPI.Apply(robot_prim, "Semantics")
-            self._robot_semantics[i].CreateSemanticTypeAttr()
-            self._robot_semantics[i].CreateSemanticDataAttr()
-            self._robot_semantics[i].GetSemanticTypeAttr().Set("class")
-            self._robot_semantics[i].GetSemanticDataAttr().Set(f"robot_{i}")
-            add_update_semantics(robot_prim, '0')
+        # # get robot semantic data
+        # # 그런데 어짜피 로봇 point cloud는 필요 없기 때문에 안 받아도 될듯
+        # self._robot_semantics = {}
+        # for i in range(self._num_envs):
+        #     robot_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/robot")
+        #     self._robot_semantics[i] = Semantics.SemanticsAPI.Apply(robot_prim, "Semantics")
+        #     self._robot_semantics[i].CreateSemanticTypeAttr()
+        #     self._robot_semantics[i].CreateSemanticDataAttr()
+        #     self._robot_semantics[i].GetSemanticTypeAttr().Set("class")
+        #     self._robot_semantics[i].GetSemanticDataAttr().Set(f"robot_{i}")
+        #     add_update_semantics(robot_prim, '0')
 
 
         # get tool semantic data
@@ -281,7 +282,7 @@ class MovingTargetTask(RLTask):
             self._tool_semantics[i].CreateSemanticDataAttr()
             self._tool_semantics[i].GetSemanticTypeAttr().Set("class")
             self._tool_semantics[i].GetSemanticDataAttr().Set(f"tool_{i}")
-            add_update_semantics(tool_prim, '1')
+            add_update_semantics(tool_prim, '1')    # added for fixing the order of semantic index
 
         # get target object semantic data
         self._target_semantics = {}
@@ -292,10 +293,10 @@ class MovingTargetTask(RLTask):
             self._target_semantics[i].CreateSemanticDataAttr()
             self._target_semantics[i].GetSemanticTypeAttr().Set("class")
             self._target_semantics[i].GetSemanticDataAttr().Set(f"target_{i}")
-            add_update_semantics(target_prim, '2')
+            add_update_semantics(target_prim, '2')  # added for fixing the order of semantic index
 
         self.init_data()
-        # return
+
 
     def initialize_views(self, scene):
         super().initialize_views(scene)
@@ -473,9 +474,12 @@ class MovingTargetTask(RLTask):
         # rest of the joints are not used for control. They are fixed joints at each episode.
 
         flange_pos, flange_rot = self._flanges.get_local_poses()
-        target_pos, target_rot = self._targets.get_local_poses()    # TODO: 물체의 pose는 명시적인 것이 아닌, pcd를 이용하도록 하자.
+        # target_pos, target_rot = self._targets.get_local_poses()    # TODO: 물체의 pose는 명시적인 것이 아닌, pcd를 이용하도록 하자.
         goal_pos, goal_rot = self._goals.get_local_poses()
 
+        # get target position from point cloud
+        target_obj_pcd = pointcloud[:, -90:, :]
+        target_pos = torch.mean(target_obj_pcd, dim=1)
 
         if self.previous_target_position == None:
             self.target_moving_distance = torch.zeros((self._num_envs), device=self._device)
@@ -487,8 +491,6 @@ class MovingTargetTask(RLTask):
                                                   ord=2, dim=1)
 
         # compute distance for calculate_metrics() and is_done()
-        # TOOD: 기존에는 물체와 tool 사이의 거리를 계산했으나, point cloud에서는 좀 다른 방식을 생각해봐야 할 것 같다.
-        # TODO: 아래에는 명시적인 것이 아닌 pcd의 평균을 이용하여 계산토록 하자.
         if self.previous_tool_target_distance == None:
             self.current_tool_target_distance = LA.norm(flange_pos - target_pos, ord=2, dim=1)
             self.previous_tool_target_distance = self.current_tool_target_distance
@@ -512,17 +514,45 @@ class MovingTargetTask(RLTask):
         generalization_noise = torch.rand((dof_vel_scaled.shape[0], 6), device=self._device) + 0.5
 
         '''
+        pcds = target_obj_pcd.detach().cpu().numpy()
+
+
+        for i in range(pcds.shape[0]):
+        
+            pcd = pcds[i]    # visualize only first env
+            
+            
+            print(f'pcd shape: {pcd.shape}')
+            point_cloud = o3d.geometry.PointCloud()
+            point_cloud.points = o3d.utility.Vector3dVector(pcd)
+            o3d.visualization.draw_geometries([point_cloud],
+                                                window_name=f'point cloud semantic')
+
+
+        
+
+        pcd = target_obj_pcd[0].detach().cpu().numpy()        
+        
+        print(f'pcd shape: {pcd.shape}')
+        point_cloud = o3d.geometry.PointCloud()
+        point_cloud.points = o3d.utility.Vector3dVector(pcd)
+        o3d.visualization.draw_geometries([point_cloud],
+                                            window_name=f'point cloud semantic')
+        '''
+
+        '''
         NE: number of environmet, N: number of points, F: feature dimension, 3: x, y, z
         pointcloud: [NE, N, 3]
         '''
-        self.obs_buf = torch.cat((pointcloud.view([pointcloud.shape[0], -1]),   # [NE, N*3], point cloud
-                                dof_pos_scaled,                               # [NE, 6]
-                                dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
-                                flange_pos,                                   # [NE, 3]
-                                flange_rot,                                   # [NE, 4]
-                                target_pos,                                   # [NE, 3]
-                                goal_pos,                                     # [NE, 3]
-                                ), dim=1)
+        self.obs_buf = torch.cat((
+                                  pointcloud.view([pointcloud.shape[0], -1]),   # [NE, N*3], point cloud
+                                  dof_pos_scaled,                               # [NE, 6]
+                                  dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
+                                  flange_pos,                                   # [NE, 3]
+                                  flange_rot,                                   # [NE, 4]
+                                  target_pos,                                   # [NE, 3]
+                                  goal_pos,                                     # [NE, 3]
+                                 ), dim=1)
         # self.obs_buf[:, 0] = self.progress_buf / self._max_episode_length
         # # 위에 있는게 꼭 들어가야 할까??? 없어도 될 것 같은데....
         
