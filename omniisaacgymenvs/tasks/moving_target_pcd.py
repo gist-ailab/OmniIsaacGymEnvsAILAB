@@ -607,7 +607,7 @@ class MovingTargetTask(RLTask):
         #                   self.robot_dof_lower_limits, self.robot_dof_upper_limits)
         added_pos = 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs-4), device=self._device) - 0.5)
         tool_pos = torch.zeros((len(env_ids), 4), device=self._device)
-        ### 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. pre_physics_step도 확인할 것
+        ### TODO: 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. pre_physics_step도 확인할 것
         pos = torch.clamp(self.robot_default_dof_pos.unsqueeze(0) + torch.column_stack((added_pos, tool_pos)),
                           self.robot_dof_lower_limits, self.robot_dof_upper_limits)
         #########################
@@ -661,8 +661,6 @@ class MovingTargetTask(RLTask):
         # goal_pos = torch.tensor(self._goal_position, device=self._device) + goal_pos_variation
         goal_pos = torch.tensor(self._goal_position, device=self._device)
         self._goals.set_world_poses(goal_pos + self._env_pos[env_ids], indices=indices)
-
-        # TODO: 여기에 물체를 집는 task를 추가???
 
         # reset dummy
         # self._dummy.set_world_poses()
