@@ -44,7 +44,7 @@ import copy
 
 
 
-class MovingTargetTask(RLTask):
+class PCDMovingTargetTask(RLTask):
     def __init__(self, name, sim_config, env, offset=None) -> None:
         #################### BSH
         self.rep = rep

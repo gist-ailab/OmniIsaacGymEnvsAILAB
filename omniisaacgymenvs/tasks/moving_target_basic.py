@@ -44,7 +44,7 @@ import copy
 # - get_extras()    
 
 
-class MovingTargetTask(RLTask):
+class BasicMovingTargetTask(RLTask):
     def __init__(self, name, sim_config, env, offset=None) -> None:
         self.update_config(sim_config)
 
