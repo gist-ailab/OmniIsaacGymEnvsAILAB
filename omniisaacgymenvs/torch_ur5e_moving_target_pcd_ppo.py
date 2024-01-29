@@ -77,7 +77,9 @@ Preprocessor가 필요할 경우, 위의 `RunningStandardScaler`를 참고하여
 
 # logging to TensorBoard and write checkpoints (in timesteps)
 cfg["experiment"]["write_interval"] = 120
-cfg["experiment"]["checkpoint_interval"] = 1200
+cfg["experiment"]["checkpoint_interval"] = 1000
+# cfg["experiment"]["experiment_name"] = "Pointnet2+MLP"
+
 cfg["experiment"]["directory"] = "runs/torch/MovingTarget"
 
 agent = PPO(models=models,
@@ -86,14 +88,18 @@ agent = PPO(models=models,
             observation_space=env.observation_space,
             action_space=env.action_space,
             device=device)
-
+# path = './runs/torch/MovingTarget/Pointnet2+MLP/checkpoints/best_agent.pt'
+# agent.load(path)
 
 # configure and instantiate the RL trainer
-cfg_trainer = {"timesteps": 24000, "headless": True}
+cfg_trainer = {"timesteps": 50000, "headless": False}
 trainer = SequentialTrainer(cfg=cfg_trainer, env=env, agents=agent)
 
 # start training
 trainer.train()
+
+# # start evaluation
+# trainer.eval()
 
 
 # # ---------------------------------------------------------
