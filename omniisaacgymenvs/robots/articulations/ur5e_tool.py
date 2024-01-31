@@ -54,7 +54,7 @@ class UR5eTool(Robot):
         self._orientation = torch.tensor([1.0, 0.0, 0.0, 0.0]) if orientation is None else orientation
 
         if self._usd_path is None:
-            isaac_root_path = os.path.join(os.path.expanduser('~'), ".local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/")
+            isaac_root_path = os.path.join(os.path.expanduser('~'), ".local/share/ov/pkg/isaac_sim-2023.1.1/")
             if isaac_root_path is None:
                 carb.log_error("Could not find Isaac Sim assets folder")
             self._usd_path = isaac_root_path + "OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/ur5e_tool.usd"
