@@ -67,12 +67,17 @@ class BasicMovingTargetTask(RLTask):
         self.eta = 0.25
         self.punishment = -1
 
-        self.stage = omni.usd.get_context().get_stage()        
+        self.stage = omni.usd.get_context().get_stage()
+
+        # tool orientation
+        self.tool_rot_x = 0.087
+        self.tool_rot_y = 1.221
+        self.tool_rot_z = 0.0
 
         # observation and action space
         # self._num_observations = 16
         # self._num_observations = 19
-        self._num_observations = 22
+        self._num_observations = 25
         # self._num_observations = 24
         if self._control_space == "joint":
             self._num_actions = 6
@@ -118,6 +123,10 @@ class BasicMovingTargetTask(RLTask):
         self._robots = UR5eView(prim_paths_expr="/World/envs/.*/robot", name="robot_view")
         # flanges view
         self._flanges = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/{self._flange_link}", name="end_effector_view")
+        # tool view
+        self._tools = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/tool", name="tool_view")
+
+
         # target view
         self._targets = RigidPrimView(prim_paths_expr="/World/envs/.*/target", name="target_view", reset_xform_properties=False)        
         # goal view
@@ -126,76 +135,8 @@ class BasicMovingTargetTask(RLTask):
         scene.add(self._goals)
         scene.add(self._robots)
         scene.add(self._flanges)
-        scene.add(self._targets)
-        
-        
-        # point cloud view
-        
-        self.lidarInterface = _range_sensor.acquire_lidar_sensor_interface()
-        # self._lidar = scene.add(
-        #     RotatingLidarPhysX(prim_path=f"/World/envs/envs_0/lidar_0",
-        #                                  name=f"lidar_0",
-        #                                  rotation_frequency=0.0,
-        #                                  position=[2, 0, 0],
-        #                                  fov=[100, 50],
-        #                                  resolution=[1, 1],
-        #                                  valid_range=[0.1, 1.0])
-        # )
-
-        self._lidar = RotatingLidarPhysX(prim_path=f"/World/envs/envs_0/lidar_0",
-                                         name=f"lidar_0",
-                                         rotation_frequency=0.0,
-                                         position=[2, 0, 0],
-                                         fov=[100, 50],
-                                         resolution=[1, 1],
-                                         valid_range=[0.1, 1.0])
-        scene.add(self._lidar)
-        self._lidar.enable_semantics()
-
-        
-        
-        # self._lidar.add_depth_data_to_frame()
-        # self._lidar.add_point_cloud_data_to_frame()
-        # self._lidar.add_semantics_data_to_frame()
-        # self._lidar.enable_visualization(high_lod=True,
-        #                                  draw_points=True,
-        #                                  draw_lines=False)
-
-
-
-
-
-        # Used to interact with the LIDAR
-        # self._point_cloud = LidarView(prim_paths=f"/World/envs/envs_0/lidar_0", name=f"lidar_view_0")
-        # scene.add(self._lidar)
-        # self._point_cloud = {}
-        # for i in range(self._num_envs):
-        #     self._point_cloud[i] = LidarView(prim_paths=f"/World/envs/env_{i}/robot/lidar/lidar", name=f"lidar_view_{i}")
-        #     scene.add(self._point_cloud[i])
-            
-
-        # get tool semantic data
-        self._tool_semantics = {}
-        for i in range(self._num_envs):
-            tool_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/robot/tool")
-            self._tool_semantics[i] = Semantics.SemanticsAPI.Apply(tool_prim, "Semantics")
-            self._tool_semantics[i].CreateSemanticTypeAttr()
-            self._tool_semantics[i].CreateSemanticDataAttr()
-            self._tool_semantics[i].GetSemanticTypeAttr().Set("class")
-            self._tool_semantics[i].GetSemanticDataAttr().Set(f"tool_{i}")
-
-        # get target object semantic data
-        self._target_semantics = {}
-        for i in range(self._num_envs):
-            target_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/target")
-            self._target_semantics[i] = Semantics.SemanticsAPI.Apply(target_prim, "Semantics")
-            self._target_semantics[i].CreateSemanticTypeAttr()
-            self._target_semantics[i].CreateSemanticDataAttr()
-            self._target_semantics[i].GetSemanticTypeAttr().Set("class")
-            self._target_semantics[i].GetSemanticDataAttr().Set(f"target_{i}")
-
-        self.init_data()
-        # return
+        scene.add(self._tools)
+        scene.add(self._targets)            
 
     def initialize_views(self, scene):
         super().initialize_views(scene)
@@ -203,6 +144,8 @@ class BasicMovingTargetTask(RLTask):
             scene.remove("robot_view", registry_only=True)
         if scene.object_exist("end_effector_view"):
             scene.remove("end_effector_view", registry_only=True)
+        if scene.object_exist("tool_view"):
+            scene.remove("tool_view", registry_only=True)
         if scene.object_exist("target_view"):
             scene.remove("target_view", registry_only=True)
         if scene.object_exist("goal_view"):
@@ -213,17 +156,15 @@ class BasicMovingTargetTask(RLTask):
 
         self._robots = UR5eView(prim_paths_expr="/World/envs/.*/robot", name="robot_view")
         self._flanges = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/{self._flange_link}", name="end_effector_view")
+        self._tools = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/tool", name="tool_view")
         self._targets = RigidPrimView(prim_paths_expr="/World/envs/.*/target", name="target_view", reset_xform_properties=False)
         self._goals = RigidPrimView(prim_paths_expr="/World/envs/.*/goal", name="goal_view", reset_xform_properties=False)
 
         scene.add(self._robots)
         scene.add(self._flanges)
+        scene.add(self._tools)
         scene.add(self._targets)
         scene.add(self._goals)
-
-        for i in range(self._num_envs):
-            self._point_cloud[i] = LidarView(prim_paths=f"/World/envs/env_{i}/robot/lidar/lidar", name=f"lidar_view_{i}")
-            scene.add(self._point_cloud[i])
         
         self.init_data()
 
@@ -259,30 +200,11 @@ class BasicMovingTargetTask(RLTask):
         self._sim_config.apply_articulation_settings("goal",
                                                      get_prim_at_path(goal.prim_path),
                                                      self._sim_config.parse_actor_config("goal"))
-    
-    def get_lidar(self, idx, scence):
-        # TODO: get lidar through code not from USD
-        self.lidarInterface = _range_sensor.acquire_lidar_sensor_interface()
-        self._lidar = RotatingLidarPhysX(prim_path=f"/World/envs/envs_{idx}/lidar_{idx}",
-                                         name=f"lidar_{idx}",
-                                         rotation_frequency=0.0,
-                                         position=[2, 0, 0],
-                                         fov=[100, 50],
-                                         resolution=[1, 1],
-                                         valid_range=[0.1, 1.0])
-        
-        self._lidar.add_depth_data_to_frame()
-        self._lidar.add_point_cloud_data_to_frame()
-        self._lidar.add_semantics_data_to_frame()
-        self._lidar.enable_visualization(high_lod=True,
-                                         draw_points=True,
-                                         draw_lines=False)
-        self._lidar.initialize()
         
 
     def init_data(self) -> None:
-        self.robot_default_dof_pos = torch.tensor(np.radians([-40, -45, 60, -100, -90, 90.0,
-                                                              0.0, 0.0, 0.0, 0.0]), device=self._device, dtype=torch.float32)
+        self.robot_default_dof_pos = torch.tensor(np.radians([-70, -65, 90, -100, -90, 90.0,
+                                                              5, 70, 0.0, 0.0]), device=self._device, dtype=torch.float32)
 
         self.actions = torch.zeros((self._num_envs, self.num_actions), device=self._device)
 
@@ -302,135 +224,16 @@ class BasicMovingTargetTask(RLTask):
             self.flange_pos, self.flange_rot = torch.zeros((self._num_envs, 3), device=self._device), torch.zeros((self._num_envs, 4), device=self._device)
 
 
-    def visualize_point_cloud(self, view_idx, lidar_position):
-        '''
-        args:
-            view_idx: index of the cloner
-            lidar_position: position of the lidar
-        '''
-        flange_pos, flange_rot = self._flanges.get_local_poses()
-
-        lidar_prim_path = self._point_cloud[view_idx].prim_path
-        point_cloud = self._point_cloud[view_idx]._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
-        semantic = self._point_cloud[view_idx]._lidar_sensor_interface.get_semantic_data(lidar_prim_path)
-
-        pcl_reshape = np.reshape(point_cloud, (point_cloud.shape[0]*point_cloud.shape[1], 3))
-        flange_pos_np = flange_pos[view_idx].cpu().numpy()
-        flange_ori_np = flange_rot[view_idx].cpu().numpy()
-
-        pcl_semantic = np.reshape(semantic, -1)        
-
-
-        v3d = o3d.utility.Vector3dVector
-
-        # get point cloud
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = v3d(pcl_reshape)
-
-        # get sampled point cloud
-        idx = pcu.downsample_point_cloud_poisson_disk(pcl_reshape, num_samples=int(0.2*pcl_reshape.shape[0]))
-        pcl_reshape_sampled = pcl_reshape[idx]
-        sampled_pcd = o3d.geometry.PointCloud()
-        sampled_pcd.points = v3d(pcl_reshape_sampled)
-
-        # get lidar frame. lidar frame is a world [0, 0, 0] frame
-        lidar_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.2, origin=np.array([0.0, 0.0, 0.0]))
-
-        # get base pose    
-        T_b = np.eye(4)
-        # TODO: get rotation matrix from USD
-        # R_b = lidar_coord.get_rotation_matrix_from_xyz((np.pi/6, 0, -np.pi/2))
-        R_b = lidar_coord.get_rotation_matrix_from_xyz((np.pi/9, 0, -np.pi/2))  # rotation relationship between lidar and base
-        T_b[:3, :3] = R_b
-        T_b[:3, 3] = lidar_position # acquired position from prim_path is [0,0,0]
-        T_b_inv = np.linalg.inv(T_b)
-        base_coord = copy.deepcopy(lidar_coord).transform(T_b_inv)
-        # o3d.visualization.draw_geometries([pcd, lidar_coord, base_coord])
-
-        # get ee pose
-        T_ee = np.eye(4)
-        R_ee = base_coord.get_rotation_matrix_from_quaternion(flange_ori_np)
-        T_ee[:3, :3] = R_ee
-        T_ee[:3, 3] = flange_pos_np
-        T_l_e = np.matmul(T_b_inv, T_ee)
-        flange_coord = copy.deepcopy(lidar_coord).transform(T_l_e)
-        # o3d.visualization.draw_geometries([pcd, lidar_coord, base_coord, flange_coord],
-        #                                   window_name=f'scene of env_{view_idx}')
-
-
-        # print(f'env index: {view_idx}', np.unique(pcl_semantic))
-
-        # 아래는 마지막 index만 가시화 (도구 가시화를 의도함)
-        # index = np.unique(pcl_semantic)[-1]
-        # print(f'show index: {index}\n')
-        # semantic = np.where(pcl_semantic==index)[0]
-        # pcd_semantic = o3d.geometry.PointCloud()
-        # pcd_semantic.points = o3d.utility.Vector3dVector(pcl_reshape[semantic])
-        # o3d.visualization.draw_geometries([pcd_semantic, lidar_coord, base_coord, flange_coord],
-        #                                     window_name=f'semantic_{index} of env_{view_idx}')
-        
-
-        for i in np.unique(pcl_semantic):
-            semantic = np.where(pcl_semantic==i)[0]
-            pcd_semantic = o3d.geometry.PointCloud()
-            pcd_semantic.points = o3d.utility.Vector3dVector(pcl_reshape[semantic])
-            o3d.visualization.draw_geometries([pcd_semantic, lidar_coord, base_coord, flange_coord],
-                                              window_name=f'semantic_{i} of env_{view_idx}')
-
-
     def get_observations(self) -> dict:
-        # async def get_point_cloud(point_cloud, lidar_prim_path):            
-        #     pointcloud = self.lidarInterface.get_point_cloud(lidar_prim_path)
-        #     semantics = self.lidarInterface.get_semantic_data(lidar_prim_path)
-        #     print("Semantics", np.unique(semantics))
-        '''Consider async when train with multiple envs point cloud'''
-
         robot_dof_pos = self._robots.get_joint_positions(clone=False)
         robot_dof_vel = self._robots.get_joint_velocities(clone=False)
         # print(f'\nrobot_dof_pos:\n{robot_dof_pos}\n')
         # print(f'robot_dof_vel:\n {robot_dof_vel}')
 
+        tool_pos, tool_rot = self._tools.get_local_poses()
         flange_pos, flange_rot = self._flanges.get_local_poses()
         target_pos, target_rot = self._targets.get_local_poses()
         goal_pos, goal_rot = self._goals.get_local_poses()
-
-        # lidar_prim_path = self._point_cloud[0].prim_path
-        # point_cloud = self._point_cloud[0]._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
-
-        lidar_prim_path = self._lidar.prim_path
-        point_cloud = self._lidar._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
-
-        # # TODO: get point cloud of the tool from lidar
-        # for i in range(self._num_envs):
-        #     lidar_prim_path = self._point_cloud[i].prim_path
-        #     point_cloud = self._point_cloud[i]._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
-        #     semantic = self._point_cloud[i]._lidar_sensor_interface.get_prim_data(lidar_prim_path)
-
-        #     pcd = np.reshape(point_cloud, (point_cloud.shape[0]*point_cloud.shape[1], 3))
-        #     pcd_semantic = np.reshape(semantic, -1)
-
-        #     index = np.unique(pcd_semantic)[-1]
-        #     tool_pcd_idx = np.where(pcd_semantic==index)[0]
-        #     tool_pcd = pcd[tool_pcd_idx]
-
-        #     tool_pcd_tensor = torch.from_numpy(tool_pcd).to(self._device)
-        #     # print(tool_pcd_tensor.shape)
-
-        #     '''
-        #     현재 쓰고있는 obs_buf에 point cloud를 넣으려면 일정 수 만큼 sampling 해서 넣어야 할듯
-        #     허나, 그 전에 한번 feature extraction을 해서 넣어야 할듯
-        #     '''
-        #     # # visulaize tool point cloud
-        #     # tool_point_cloud = o3d.geometry.PointCloud()
-        #     # tool_point_cloud.points = o3d.utility.Vector3dVector(tool_pcd)
-        #     # o3d.visualization.draw_geometries([tool_point_cloud],
-        #     #                                   window_name='tool point cloud')
-
-        #     # # visualize point cloud with lidar frame
-        #     # for i in range(self.num_envs):
-        #     #     self.visualize_point_cloud(view_idx = i,
-        #     #                             lidar_position = np.array([0.35, 0.5, 0.4]))
-
 
         if self.previous_target_position == None:
             self.target_moving_distance = torch.zeros((self._num_envs), device=self._device)
@@ -442,9 +245,10 @@ class BasicMovingTargetTask(RLTask):
                                                   ord=2, dim=1)
 
         # compute distance for calculate_metrics() and is_done()
-        # TOOD: 기존에는 물체와 tool 사이의 거리를 계산했으나, point cloud에서는 좀 다른 방식을 생각해봐야 할 것 같다.
+        self.flange_tool_distance = LA.norm(flange_pos - tool_pos, ord=2, dim=1)
+
         if self.previous_tool_target_distance == None:
-            self.current_tool_target_distance = LA.norm(flange_pos - target_pos, ord=2, dim=1)
+            self.current_tool_target_distance = LA.norm(tool_pos - target_pos, ord=2, dim=1)
             self.previous_tool_target_distance = self.current_tool_target_distance
             self.current_target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
             self.previous_target_goal_distance = self.current_target_goal_distance
@@ -467,18 +271,11 @@ class BasicMovingTargetTask(RLTask):
         # self.obs_buf[:, 13:16] = target_pos - self._env_pos
         # self.obs_buf[:, 16:19] = goal_pos - self._env_pos
         self.obs_buf[:, 13:16] = flange_pos
-        self.obs_buf[:, 16:19] = target_pos
-        self.obs_buf[:, 19:22] = goal_pos
+        self.obs_buf[:, 16:19] = tool_pos
+        self.obs_buf[:, 19:22] = target_pos
+        self.obs_buf[:, 22:25] = goal_pos
         # self.obs_buf[:, 22] = self.current_tool_target_distance
         # self.obs_buf[:, 23] = self.current_target_goal_distance
-        
-        # self._env_pos is the position of the each environment. It comse from RLTask.
-
-        # compute distance for calculate_metrics() and is_done()
-        # self._computed_tool_target_distance = LA.norm(tip_pos - target_pos, ord=2, dim=1)
-        # self._computed_target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
-
-
 
         if self._control_space == "cartesian":
             self.jacobians = self._robots.get_jacobians(clone=False)
@@ -510,12 +307,13 @@ class BasicMovingTargetTask(RLTask):
 
         self.robot_dof_targets[:, :6] = torch.clamp(targets, self.robot_dof_lower_limits[:6], self.robot_dof_upper_limits[:6])
         self.robot_dof_targets[:, 6:] = torch.tensor(0, device=self._device, dtype=torch.float16)
-        self.robot_dof_targets[:, 6] = torch.tensor(0.09, device=self._device)
-        self.robot_dof_targets[:, 7] = torch.tensor(1.2, device=self._device)
+        self.robot_dof_targets[:, 6] = torch.tensor(self.tool_rot_x, device=self._device) # 5 degree
+        self.robot_dof_targets[:, 7] = torch.tensor(self.tool_rot_y, device=self._device) # 70 degree
         ### 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. reset_idx도 확인할 것
         # self._robots.get_joint_positions()
         # self._robots.set_joint_positions(self.robot_dof_targets, indices=env_ids_int32)
         self._robots.set_joint_position_targets(self.robot_dof_targets, indices=env_ids_int32)
+        # TOOD: self.robot_dof_targets의 나머지 value가 0인지 확인
         # self._targets.enable_rigid_body_physics()
         # self._targets.enable_rigid_body_physics(indices=env_ids_int32)
         # self._targets.enable_gravities(indices=env_ids_int32)
@@ -533,9 +331,10 @@ class BasicMovingTargetTask(RLTask):
         pos = torch.clamp(self.robot_default_dof_pos.unsqueeze(0) + torch.column_stack((added_pos, tool_pos)),
                           self.robot_dof_lower_limits, self.robot_dof_upper_limits)
         #########################
-        pos[:, 6] = torch.tensor(0.09, device=self._device)
-        pos[:, 7] = torch.tensor(1.2, device=self._device)
+        pos[:, 6] = torch.tensor(self.tool_rot_x, device=self._device)
+        pos[:, 7] = torch.tensor(self.tool_rot_y, device=self._device)
         #########################
+        '''아마 윗 부분이 radom 값을 부여해주는 부분 같은데 확인해보자.'''
 
         
         
