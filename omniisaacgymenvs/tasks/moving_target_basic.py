@@ -138,6 +138,8 @@ class BasicMovingTargetTask(RLTask):
         scene.add(self._tools)
         scene.add(self._targets)            
 
+        self.init_data()
+
     def initialize_views(self, scene):
         super().initialize_views(scene)
         if scene.object_exist("robot_view"):
