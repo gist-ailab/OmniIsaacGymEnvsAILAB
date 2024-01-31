@@ -15,14 +15,13 @@ from skrl.resources.schedulers.torch import KLAdaptiveRL
 from skrl.trainers.torch import SequentialTrainer
 from skrl.utils import set_seed
 
-from omniisaacgymenvs.model.shared_transformer import SharedTransformerEnc
 from omniisaacgymenvs.model.shared import Shared
 
 # seed for reproducibility
 seed = 42
 set_seed(seed)  # e.g. `set_seed(42)` for fixed seed
 
-env = load_omniverse_isaacgym_env(task_name="MovingTarget")
+env = load_omniverse_isaacgym_env(task_name="BasicMovingTarget")
 # env.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(env.observation_space.shape[0],3), dtype=np.float32)
 env = wrap_env(env)
 
@@ -80,7 +79,7 @@ cfg["experiment"]["write_interval"] = 120
 cfg["experiment"]["checkpoint_interval"] = 1000
 # cfg["experiment"]["experiment_name"] = "Pointnet2+MLP"
 
-cfg["experiment"]["directory"] = "runs/torch/MovingTarget"
+cfg["experiment"]["directory"] = "runs/torch/MovingTarget_Basic"
 
 agent = PPO(models=models,
             memory=memory,
