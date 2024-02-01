@@ -5,8 +5,9 @@ physics_engine: ${..physics_engine}
 
 # if given, will override the device setting in gym. 
 env:
-  # numEnvs: ${resolve_default:4096,${...num_envs}}
-  numEnvs: ${resolve_default:1,${...num_envs}}
+  # numEnvs: ${resolve_default:2048,${...num_envs}}
+  numEnvs: ${resolve_default:5,${...num_envs}}
+  # numEnvs: ${resolve_default:1,${...num_envs}}
   envSpacing: 3.0
   episodeLength: 300
   enableDebugVis: False
@@ -22,7 +23,7 @@ env:
   aggregateMode: 3  # 안 쓰는데 왜 있는건지?
 
   controlSpace: "cartesian"
-  goal: [0.5, 0.3, 0.0]
+  goal: [0.85, 0.6, 0.0]
 
   ########## reward parameters ##########
   actionScale: 2.5
