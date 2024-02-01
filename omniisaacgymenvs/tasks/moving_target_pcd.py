@@ -456,8 +456,11 @@ class PCDMovingTargetTask(RLTask):
     def get_observations(self) -> dict:
         ''' retrieve point cloud data from all render products '''
         # tasks/utils/pcd_writer.py 에서 pcd sample하고 tensor로 변환해서 가져옴
-        pointcloud = self.pointcloud_listener.get_pointcloud_data()
-        # TODO: pointcloud로부터 각 환경의 cube 위치를 가져와야 한다.
+        try:
+            pointcloud = self.pointcloud_listener.get_pointcloud_data()
+            # TODO: pointcloud로부터 각 환경의 cube 위치를 가져와야 한다.
+        except:
+            pointcloud = torch.rand((self._num_envs, 200, 3), device=self._device)
 
         '''
         아래 순서로 최종 obs_buf에 concat. 첫 차원은 환경 갯수
