@@ -22,7 +22,7 @@ from omniisaacgymenvs.model.shared import Shared
 seed = 42
 set_seed(seed)  # e.g. `set_seed(42)` for fixed seed
 
-env = load_omniverse_isaacgym_env(task_name="MovingTarget")
+env = load_omniverse_isaacgym_env(task_name="PCDMovingTarget")
 # env.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(env.observation_space.shape[0],3), dtype=np.float32)
 env = wrap_env(env)
 
@@ -37,8 +37,8 @@ memory = RandomMemory(memory_size=16, num_envs=env.num_envs, device=device)
 # PPO requires 2 models, visit its documentation for more details
 # https://skrl.readthedocs.io/en/latest/api/agents/ppo.html#models
 models = {}
-models["policy"] = SharedTransformerEnc(env.observation_space, env.action_space, env.num_envs, device)
-# models["policy"] = Shared(env.observation_space, env.action_space, device)
+# models["policy"] = SharedTransformerEnc(env.observation_space, env.action_space, env.num_envs, device)
+models["policy"] = Shared(env.observation_space, env.action_space, device)
 models["value"] = models["policy"]  # same instance: shared model
 
 
