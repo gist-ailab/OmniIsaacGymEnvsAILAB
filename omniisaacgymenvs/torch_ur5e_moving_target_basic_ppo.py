@@ -77,7 +77,7 @@ Preprocessor가 필요할 경우, 위의 `RunningStandardScaler`를 참고하여
 # logging to TensorBoard and write checkpoints (in timesteps)
 cfg["experiment"]["write_interval"] = 100
 cfg["experiment"]["checkpoint_interval"] = 100
-# cfg["experiment"]["experiment_name"] = "Pointnet2+MLP"
+cfg["experiment"]["experiment_name"] = "RandomizedTargetPosition"
 
 cfg["experiment"]["directory"] = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/MovingTarget_Basic_wo_punishment"
 # cfg["experiment"]["directory"] = "runs/torch/MovingTarget_Basic_wo_punishment"
