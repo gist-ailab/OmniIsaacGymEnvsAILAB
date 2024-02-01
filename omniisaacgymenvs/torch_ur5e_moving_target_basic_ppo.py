@@ -75,11 +75,12 @@ Preprocessor가 필요할 경우, 위의 `RunningStandardScaler`를 참고하여
 # cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
 
 # logging to TensorBoard and write checkpoints (in timesteps)
-cfg["experiment"]["write_interval"] = 120
-cfg["experiment"]["checkpoint_interval"] = 1000
+cfg["experiment"]["write_interval"] = 100
+cfg["experiment"]["checkpoint_interval"] = 100
 # cfg["experiment"]["experiment_name"] = "Pointnet2+MLP"
 
-cfg["experiment"]["directory"] = "runs/torch/MovingTarget_Basic"
+cfg["experiment"]["directory"] = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/MovingTarget_Basic_wo_punishment"
+# cfg["experiment"]["directory"] = "runs/torch/MovingTarget_Basic_wo_punishment"
 
 agent = PPO(models=models,
             memory=memory,
@@ -87,11 +88,11 @@ agent = PPO(models=models,
             observation_space=env.observation_space,
             action_space=env.action_space,
             device=device)
-# path = './runs/torch/MovingTarget/Pointnet2+MLP/checkpoints/best_agent.pt'
+# path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/MovingTarget_Basic_w_punishment/24-02-01_18-47-05-816341_PPO/checkpoints/best_agent.pt'
 # agent.load(path)
 
 # configure and instantiate the RL trainer
-cfg_trainer = {"timesteps": 50000, "headless": False}
+cfg_trainer = {"timesteps": 10000, "headless": False}
 trainer = SequentialTrainer(cfg=cfg_trainer, env=env, agents=agent)
 
 # start training
