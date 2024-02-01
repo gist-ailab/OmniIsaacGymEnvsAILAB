@@ -10,17 +10,12 @@ enable_extension("omni.replicator.isaac")   # required by PytorchListener
 from omniisaacgymenvs.tasks.base.rl_task import RLTask
 from omniisaacgymenvs.robots.articulations.ur5e_tool import UR5eTool
 from omniisaacgymenvs.robots.articulations.views.ur5e_view import UR5eView
-from omniisaacgymenvs.sensors.views.lidar_view import LidarView
-from omni.isaac.range_sensor import _range_sensor
-from omni.isaac.sensor import RotatingLidarPhysX
 
 import omni
 from omni.isaac.core.prims import RigidPrimView
-# from omni.isaac.core.prims.base_sensor import BaseSensor
 # from omni.isaac.core.articulations import ArticulationView
 from omni.isaac.core.objects import DynamicCylinder, DynamicSphere, DynamicCuboid
 # from omni.isaac.core.materials import PhysicsMaterial
-# from omni.isaac.core.utils.string import find_unique_string_name
 from omni.isaac.core.utils.prims import get_prim_at_path, is_prim_path_valid
 # from omni.isaac.sensor import Camera, LidarRtx, RotatingLidarPhysX
 from omni.kit.viewport.utility import get_active_viewport
@@ -31,8 +26,6 @@ from pxr import Usd, UsdGeom, Gf, UsdPhysics, Semantics              # pxr usd i
 from typing import Optional, Tuple
 import asyncio
 
-import open3d as o3d
-import point_cloud_utils as pcu
 import copy
 
 
@@ -205,8 +198,8 @@ class BasicMovingTargetTask(RLTask):
         
 
     def init_data(self) -> None:
-        self.robot_default_dof_pos = torch.tensor(np.radians([-70, -65, 90, -100, -90, 90.0,
-                                                              5, 70, 0.0, 0.0]), device=self._device, dtype=torch.float32)
+        self.robot_default_dof_pos = torch.tensor(np.radians([-50, -40, 50, -100, -90, 110,
+                                                              5, 70, 0.0, -90]), device=self._device, dtype=torch.float32)
 
         self.actions = torch.zeros((self._num_envs, self.num_actions), device=self._device)
 
@@ -258,7 +251,7 @@ class BasicMovingTargetTask(RLTask):
         else:
             self.previous_tool_target_distance = self.current_tool_target_distance
             self.previous_target_goal_distance = self.current_target_goal_distance
-            self.current_tool_target_distance = LA.norm(flange_pos - target_pos, ord=2, dim=1)
+            self.current_tool_target_distance = LA.norm(tool_pos - target_pos, ord=2, dim=1)
             self.current_target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
 
         dof_pos_scaled = 2.0 * (robot_dof_pos - self.robot_dof_lower_limits) \
@@ -325,21 +318,17 @@ class BasicMovingTargetTask(RLTask):
         indices = env_ids.to(dtype=torch.int32)
 
         # reset robot
-        # pos = torch.clamp(self.robot_default_dof_pos.unsqueeze(0) + 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs), device=self._device) - 0.5),
-        #                   self.robot_dof_lower_limits, self.robot_dof_upper_limits)
         added_pos = 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs-4), device=self._device) - 0.5)
-        tool_pos = torch.zeros((len(env_ids), 4), device=self._device)
-        ### 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. pre_physics_step도 확인할 것
+        tool_pos = torch.zeros((len(env_ids), 4), device=self._device)  # 여기에 rand를 추가
+        # ### 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. pre_physics_step도 확인할 것
         pos = torch.clamp(self.robot_default_dof_pos.unsqueeze(0) + torch.column_stack((added_pos, tool_pos)),
                           self.robot_dof_lower_limits, self.robot_dof_upper_limits)
         #########################
         pos[:, 6] = torch.tensor(self.tool_rot_x, device=self._device)
         pos[:, 7] = torch.tensor(self.tool_rot_y, device=self._device)
         #########################
-        '''아마 윗 부분이 radom 값을 부여해주는 부분 같은데 확인해보자.'''
+        '''아마 윗 부분을 수정해서 robot pose에 radom 값을 부여 '''
 
-        
-        
         dof_pos = torch.zeros((len(indices), self._robots.num_dof), device=self._device)
         dof_pos[:, :] = pos
         dof_vel = torch.zeros((len(indices), self._robots.num_dof), device=self._device)
@@ -355,20 +344,20 @@ class BasicMovingTargetTask(RLTask):
         # # self._robots.get_joint_positions()
         # ##############################################################################################################
 
-        # reset lidar #####################
-        # self._lidar.add_depth_data_to_frame()
-        # self._lidar.add_point_cloud_data_to_frame()
-        # self._lidar.enable_visualization(high_lod=True,
-        #                                   draw_points=True,
-        #                                   draw_lines=False)
-        # self._lidar.initialize()
-
         # reset target
-        position = torch.tensor([0.50, -0.2, 0.15], device=self._device)
-        target_pos = position.repeat(len(env_ids),1)
-        # target_pos = (torch.rand((len(env_ids), 3), device=self._device) - 0.5) * 2 \
-        #             * torch.tensor([0.25, 0.25, 0.10], device=self._device) \
-        #             + torch.tensor([0.50, 0.00, 0.20], device=self._device)
+        position = torch.tensor([0.85, -0.3, 0.04], device=self._device)
+        x_ref = torch.abs(position[0])
+        y_ref = torch.abs(position[1])
+        z_ref = torch.abs(position[2])
+        # generate uniform random values for randomizing target position
+        # reference: https://stackoverflow.com/questions/44328530/how-to-get-a-uniform-distribution-in-a-range-r1-r2-in-pytorch
+        x_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-x_ref*0.15, x_ref*0.15).to(device=self._device)
+        y_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-y_ref*0.15, y_ref*0.15).to(device=self._device)
+        # z_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-z_ref*0.15, z_ref*0.15).to(device=self._device)
+        # #### Do not randomize z position ####
+        z_rand = z_ref.repeat(len(env_ids),1)
+        rand = torch.cat((x_rand, y_rand, z_rand), dim=1)
+        target_pos = position.repeat(len(env_ids),1) + rand
 
         orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)
         target_ori = orientation.repeat(len(env_ids),1)
@@ -385,11 +374,6 @@ class BasicMovingTargetTask(RLTask):
         goal_pos = torch.tensor(self._goal_position, device=self._device)
         self._goals.set_world_poses(goal_pos + self._env_pos[env_ids], indices=indices)
 
-        # TODO: 여기에 물체를 집는 task를 추가???
-
-        # reset dummy
-        # self._dummy.set_world_poses()
-
         # bookkeeping
         self.reset_buf[env_ids] = 0
         self.progress_buf[env_ids] = 0
@@ -404,8 +388,6 @@ class BasicMovingTargetTask(RLTask):
         self.robot_dof_targets = torch.zeros((self._num_envs, self.num_robot_dofs), dtype=torch.float, device=self._device)
         # self._targets.enable_rigid_body_physics()
         # self._targets.enable_gravities()
-
-
 
         # randomize all envs
         indices = torch.arange(self._num_envs, dtype=torch.int64, device=self._device)
@@ -427,8 +409,8 @@ class BasicMovingTargetTask(RLTask):
                           self.beta * target_goal_distance_reward + \
                           self.gamma * self.completion_reward + \
                           self.zeta * delta_tool_target + \
-                          self.eta * delta_target_goal + \
-                          self.punishment * avoiding_non_touch        
+                          self.eta * delta_target_goal
+                        #   self.punishment * avoiding_non_touch        
         
         # 시간이 지나도 target이 움직이지 않으면 minus reward를 주어야 할 듯
 
