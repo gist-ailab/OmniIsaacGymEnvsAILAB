@@ -334,16 +334,13 @@ class BasicMovingTargetTask(RLTask):
         indices = env_ids.to(dtype=torch.int32)
 
         # reset robot
-        added_pos = 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs-4), device=self._device) - 0.5)
-        tool_pos = torch.zeros((len(env_ids), 4), device=self._device)  # 여기에 rand를 추가
+        pos = self.robot_default_dof_pos.unsqueeze(0).repeat(len(env_ids), 1)   # non-randomized
+        ##### randomize robot pose #####
+        randomize_manipulator_pos = 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs-4), device=self._device) - 0.5)
+        # tool_pos = torch.zeros((len(env_ids), 4), device=self._device)  # 여기에 rand를 추가
         # ### 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. pre_physics_step도 확인할 것
-        pos = torch.clamp(self.robot_default_dof_pos.unsqueeze(0) + torch.column_stack((added_pos, tool_pos)),
-                          self.robot_dof_lower_limits, self.robot_dof_upper_limits)
-        #########################
-        pos[:, 6] = torch.tensor(self.tool_rot_x, device=self._device)
-        pos[:, 7] = torch.tensor(self.tool_rot_y, device=self._device)
-        #########################
-        '''아마 윗 부분을 수정해서 robot pose에 radom 값을 부여 '''
+        pos[:, 0:6] = pos[:, 0:6] + randomize_manipulator_pos
+        ##### randomize robot pose #####
 
         dof_pos = torch.zeros((len(indices), self._robots.num_dof), device=self._device)
         dof_pos[:, :] = pos
@@ -354,11 +351,6 @@ class BasicMovingTargetTask(RLTask):
         self._robots.set_joint_positions(dof_pos, indices=indices)
         self._robots.set_joint_position_targets(self.robot_dof_targets[env_ids], indices=indices)
         self._robots.set_joint_velocities(dof_vel, indices=indices)
-
-        # ##############################################################################################################
-        # self.robot_dof_targets[:, 6:] = torch.tensor(0, device=self._device, dtype=torch.float16)
-        # # self._robots.get_joint_positions()
-        # ##############################################################################################################
 
         # reset target
         position = torch.tensor([0.8, -0.3, 0.04], device=self._device)
