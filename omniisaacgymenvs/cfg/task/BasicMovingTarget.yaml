@@ -9,7 +9,7 @@ env:
   # numEnvs: ${resolve_default:5,${...num_envs}}
   numEnvs: ${resolve_default:1,${...num_envs}}
   envSpacing: 3.0
-  episodeLength: 500
+  episodeLength: 200
   enableDebugVis: False
 
   clipObservations: 5.0
@@ -23,7 +23,8 @@ env:
   aggregateMode: 3  # 안 쓰는데 왜 있는건지?
 
   controlSpace: "cartesian"
-  goal: [0.85, 0.6, 0.0]
+  goal: [0.8, 0.25, 0.025]
+  # goal: [0.8, 0.25, 3]
 
   ########## reward parameters ##########
   actionScale: 2.5
@@ -106,26 +107,39 @@ sim:
   
   target: # BSH
     override_usd_defaults: False
-    make_kinematic: False # BSH
-    fixed_base: False # BSH
+    # make_kinematic: False # BSH
+    # fixed_base: False # BSH
     enable_self_collisions: True
     enable_gyroscopic_forces: True
     # also in stage params
-    # per-actor
-    solver_position_iteration_count: 12
-    solver_velocity_iteration_count: 1
-    sleep_threshold: 0.005
-    stabilization_threshold: 0.001
-    # per-body
-    density: 10
-    max_depenetration_velocity: 1000.0
-    contact_offset: 0.005
-    rest_offset: 0.0
+    # # per-actor
+    # solver_position_iteration_count: 12
+    # solver_velocity_iteration_count: 1
+    # sleep_threshold: 0.005
+    # stabilization_threshold: 0.001
+    # # per-body
+    # density: 10
+    # max_depenetration_velocity: 1000.0
+    # contact_offset: 0.005
+    # rest_offset: 0.0
   
   goal: # BSH
     override_usd_defaults: False
-    make_kinematic: True  # BSH 이게 True여야 움직이지 않는 물체가 됨
-    # fixed_base: True
+    make_kinematic: True  # BSH 이게 True여야 움직이지 않는 물체가 됨 
     enable_self_collisions: False
     enable_gyroscopic_forces: True
+    # disable_rigid_body_physics: True
+    # disable_rigid_body_physics: False
+    # fixed_base: True
+    
+    # make_kinematic: False  # BSH 이게 True여야 움직이지 않는 물체가 됨 
+    
+    # also in stage params
+    # per-actor
+    solver_position_iteration_count: 6
+    solver_velocity_iteration_count: 0
+    sleep_threshold: 0.005
+    stabilization_threshold: 0.001
+    # per-body
     density: -1
+    max_depenetration_velocity: 1000.0

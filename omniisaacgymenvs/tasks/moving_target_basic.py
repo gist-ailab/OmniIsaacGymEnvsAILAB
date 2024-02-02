@@ -14,7 +14,7 @@ from omniisaacgymenvs.robots.articulations.views.ur5e_view import UR5eView
 import omni
 from omni.isaac.core.prims import RigidPrimView
 # from omni.isaac.core.articulations import ArticulationView
-from omni.isaac.core.objects import DynamicCylinder, DynamicSphere, DynamicCuboid
+from omni.isaac.core.objects import DynamicCylinder, DynamicSphere, DynamicCuboid, VisualCone, DynamicCone
 # from omni.isaac.core.materials import PhysicsMaterial
 from omni.isaac.core.utils.prims import get_prim_at_path, is_prim_path_valid
 # from omni.isaac.sensor import Camera, LidarRtx, RotatingLidarPhysX
@@ -56,9 +56,10 @@ class BasicMovingTargetTask(RLTask):
         
         self.alpha = 0.15
         self.beta = 0.5
-        self.gamma = 0
+        self.gamma = 0.1
         self.zeta = 0.1
-        self.eta = 0.25
+        self.eta = 0.15
+        print(self.alpha + self.beta + self.gamma + self.zeta + self.eta)
         self.punishment = -1
 
         self.stage = omni.usd.get_context().get_stage()
@@ -120,11 +121,11 @@ class BasicMovingTargetTask(RLTask):
         # tool view
         self._tools = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/tool", name="tool_view")
 
-
         # target view
-        self._targets = RigidPrimView(prim_paths_expr="/World/envs/.*/target", name="target_view", reset_xform_properties=False)        
+        self._targets = RigidPrimView(prim_paths_expr="/World/envs/.*/target", name="target_view")
         # goal view
         self._goals = RigidPrimView(prim_paths_expr="/World/envs/.*/goal", name="goal_view", reset_xform_properties=False)
+        self._goals._non_root_link = True   # do not set states for kinematics
 
         scene.add(self._goals)
         scene.add(self._robots)
@@ -133,6 +134,8 @@ class BasicMovingTargetTask(RLTask):
         scene.add(self._targets)            
 
         self.init_data()
+
+        return
 
     def initialize_views(self, scene):
         super().initialize_views(scene)
@@ -153,7 +156,7 @@ class BasicMovingTargetTask(RLTask):
         self._robots = UR5eView(prim_paths_expr="/World/envs/.*/robot", name="robot_view")
         self._flanges = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/{self._flange_link}", name="end_effector_view")
         self._tools = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/tool", name="tool_view")
-        self._targets = RigidPrimView(prim_paths_expr="/World/envs/.*/target", name="target_view", reset_xform_properties=False)
+        self._targets = RigidPrimView(prim_paths_expr="/World/envs/.*/target", name="target_view")
         self._goals = RigidPrimView(prim_paths_expr="/World/envs/.*/goal", name="goal_view", reset_xform_properties=False)
 
         scene.add(self._robots)
@@ -174,31 +177,41 @@ class BasicMovingTargetTask(RLTask):
                                                      self._sim_config.parse_actor_config("robot"))
 
     def get_target(self):
-        target = DynamicCuboid(prim_path=self.default_zero_env_path + "/target",
-                               name="target",
-                            #    size=0.07,
-                               size=0.1,
-                               density=1,
-                               color=torch.tensor([255, 0, 0]),
-                               physics_material=PhysicsMaterial(
-                                                                prim_path="/World/physics_materials/target_material",
-                                                                static_friction=0.01, dynamic_friction=0.01),
-                               )
+        # target = DynamicCuboid(prim_path=self.default_zero_env_path + "/target",
+        #                        name="target",
+        #                        size=0.07,
+        #                     #    size=0.1,
+        #                        density=1,
+        #                        color=torch.tensor([255, 0, 0]),
+        #                        physics_material=PhysicsMaterial(
+        #                                                         prim_path="/World/physics_materials/target_material",
+        #                                                         static_friction=0.01, dynamic_friction=0.01),
+        #                        )
+        target = DynamicCylinder(prim_path=self.default_zero_env_path + "/target",
+                                 name="target",
+                                 radius=0.04,
+                                 height=0.05,
+                                 density=1,
+                                 color=torch.tensor([255, 0, 0]),
+                                 physics_material=PhysicsMaterial(
+                                                                  prim_path="/World/physics_materials/target_material",
+                                                                  static_friction=0.01, dynamic_friction=0.01)
+                                 )
         
         self._sim_config.apply_articulation_settings("target",
                                                      get_prim_at_path(target.prim_path),
                                                      self._sim_config.parse_actor_config("target"))
 
     def get_goal(self):
-        goal = DynamicSphere(prim_path=self.default_zero_env_path + "/goal",
-                             name="goal",
-                             radius=0.025,
-                             color=torch.tensor([0, 255, 0]))
-        # goal.disable_rigid_body_physics()
+        goal = DynamicCone(prim_path=self.default_zero_env_path + "/goal",
+                          name="goal",
+                          radius=0.015,
+                          height=0.03,
+                          color=torch.tensor([0, 255, 0]))
         self._sim_config.apply_articulation_settings("goal",
                                                      get_prim_at_path(goal.prim_path),
                                                      self._sim_config.parse_actor_config("goal"))
-        
+        goal.set_collision_enabled(False)
 
     def init_data(self) -> None:
         self.robot_default_dof_pos = torch.tensor(np.radians([-50, -40, 50, -100, -90, 110,
@@ -348,7 +361,7 @@ class BasicMovingTargetTask(RLTask):
         # ##############################################################################################################
 
         # reset target
-        position = torch.tensor([0.85, -0.3, 0.04], device=self._device)
+        position = torch.tensor([0.8, -0.3, 0.04], device=self._device)
         # x_ref = torch.abs(position[0])
         # y_ref = torch.abs(position[1])
         # z_ref = torch.abs(position[2])
