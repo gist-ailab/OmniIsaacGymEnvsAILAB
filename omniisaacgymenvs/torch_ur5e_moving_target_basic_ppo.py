@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import gym
 import numpy as np
+from datetime import datetime
 
 # import the skrl components to build the RL system
 from skrl.agents.torch.ppo import PPO, PPO_DEFAULT_CONFIG
@@ -61,7 +62,7 @@ cfg["clip_predicted_values"] = True
 cfg["entropy_loss_scale"] = 0.0
 cfg["value_loss_scale"] = 2.0
 cfg["kl_threshold"] = 0
-cfg["rewards_shaper"] = lambda rewards, timestep, timesteps: rewards * 0.01
+# cfg["rewards_shaper"] = lambda rewards, timestep, timesteps: rewards * 0.01
 '''
 https://skrl.readthedocs.io/en/develop/api/resources/preprocessors/running_standard_scaler.html
 https://skrl.readthedocs.io/en/develop/intro/getting_started.html#preprocessors
@@ -77,9 +78,12 @@ Preprocessor가 필요할 경우, 위의 `RunningStandardScaler`를 참고하여
 # logging to TensorBoard and write checkpoints (in timesteps)
 cfg["experiment"]["write_interval"] = 100
 cfg["experiment"]["checkpoint_interval"] = 100
-cfg["experiment"]["experiment_name"] = "RandomizedTargetPosition"
 
-cfg["experiment"]["directory"] = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/MovingTarget_Basic_wo_punishment"
+now = datetime.now()
+formatted_date = now.strftime("%y%m%d_%H%M%S")
+cfg["experiment"]["experiment_name"] = f"FixedTargetPosition_wo_Normalization_{formatted_date}"
+
+cfg["experiment"]["directory"] = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/MovingTarget_Basic_Cylinder_wo_punishment"
 # cfg["experiment"]["directory"] = "runs/torch/MovingTarget_Basic_wo_punishment"
 
 agent = PPO(models=models,
@@ -88,11 +92,11 @@ agent = PPO(models=models,
             observation_space=env.observation_space,
             action_space=env.action_space,
             device=device)
-# path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/MovingTarget_Basic_w_punishment/24-02-01_18-47-05-816341_PPO/checkpoints/best_agent.pt'
+# path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/MovingTarget_Basic_wo_punishment/FixedTargetPosition/checkpoints/best_agent.pt'
 # agent.load(path)
 
 # configure and instantiate the RL trainer
-cfg_trainer = {"timesteps": 10000, "headless": False}
+cfg_trainer = {"timesteps": 15000, "headless": False}
 trainer = SequentialTrainer(cfg=cfg_trainer, env=env, agents=agent)
 
 # start training
