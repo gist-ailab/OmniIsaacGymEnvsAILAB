@@ -19,6 +19,7 @@ from omni.isaac.core.objects import DynamicCylinder, DynamicSphere, DynamicCuboi
 from omni.isaac.core.utils.prims import get_prim_at_path, is_prim_path_valid
 # from omni.isaac.sensor import Camera, LidarRtx, RotatingLidarPhysX
 from omni.kit.viewport.utility import get_active_viewport
+from omni.isaac.core.materials.physics_material import PhysicsMaterial
 
 from skrl.utils import omniverse_isaacgym_utils
 from pxr import Usd, UsdGeom, Gf, UsdPhysics, Semantics              # pxr usd imports used to create cube
@@ -175,11 +176,13 @@ class BasicMovingTargetTask(RLTask):
     def get_target(self):
         target = DynamicCuboid(prim_path=self.default_zero_env_path + "/target",
                                name="target",
-                               size=0.07,
+                            #    size=0.07,
+                               size=0.1,
                                density=1,
                                color=torch.tensor([255, 0, 0]),
-                            #    physics_material=PhysicsMaterial(prim_path=physics_material_path,
-                            #                                     static_friction=0.1, dynamic_friction=0.1),
+                               physics_material=PhysicsMaterial(
+                                                                prim_path="/World/physics_materials/target_material",
+                                                                static_friction=0.01, dynamic_friction=0.01),
                                )
         
         self._sim_config.apply_articulation_settings("target",
@@ -346,18 +349,19 @@ class BasicMovingTargetTask(RLTask):
 
         # reset target
         position = torch.tensor([0.85, -0.3, 0.04], device=self._device)
-        x_ref = torch.abs(position[0])
-        y_ref = torch.abs(position[1])
-        z_ref = torch.abs(position[2])
-        # generate uniform random values for randomizing target position
-        # reference: https://stackoverflow.com/questions/44328530/how-to-get-a-uniform-distribution-in-a-range-r1-r2-in-pytorch
-        x_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-x_ref*0.15, x_ref*0.15).to(device=self._device)
-        y_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-y_ref*0.15, y_ref*0.15).to(device=self._device)
-        # z_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-z_ref*0.15, z_ref*0.15).to(device=self._device)
-        # #### Do not randomize z position ####
-        z_rand = z_ref.repeat(len(env_ids),1)
-        rand = torch.cat((x_rand, y_rand, z_rand), dim=1)
-        target_pos = position.repeat(len(env_ids),1) + rand
+        # x_ref = torch.abs(position[0])
+        # y_ref = torch.abs(position[1])
+        # z_ref = torch.abs(position[2])
+        # # generate uniform random values for randomizing target position
+        # # reference: https://stackoverflow.com/questions/44328530/how-to-get-a-uniform-distribution-in-a-range-r1-r2-in-pytorch
+        # x_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-x_ref*0.15, x_ref*0.15).to(device=self._device)
+        # y_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-y_ref*0.15, y_ref*0.15).to(device=self._device)
+        # # z_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-z_ref*0.15, z_ref*0.15).to(device=self._device)
+        # # #### Do not randomize z position ####
+        # z_rand = z_ref.repeat(len(env_ids),1)
+        # rand = torch.cat((x_rand, y_rand, z_rand), dim=1)
+        # target_pos = position.repeat(len(env_ids),1) + rand
+        target_pos = position.repeat(len(env_ids),1)
 
         orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)
         target_ori = orientation.repeat(len(env_ids),1)
@@ -367,11 +371,18 @@ class BasicMovingTargetTask(RLTask):
         # self._targets.enable_rigid_body_physics()
 
         # reset goal
-        # goal_pos_xy_variation = torch.rand((len(env_ids), 2), device=self._device) * 0.1
-        # goal_pos_z_variation = torch.mul(torch.ones((len(env_ids), 1), device=self._device), 0.025)
-        # goal_pos_variation = torch.cat((goal_pos_xy_variation, goal_pos_z_variation), dim=1)
-        # goal_pos = torch.tensor(self._goal_position, device=self._device) + goal_pos_variation
         goal_pos = torch.tensor(self._goal_position, device=self._device)
+        # x_ref = torch.abs(goal_pos[0])
+        # y_ref = torch.abs(goal_pos[1])
+        # z_ref = torch.abs(goal_pos[2])
+        # # generate uniform random values for randomizing goal position
+        # x_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-x_ref*0.15, x_ref*0.15).to(device=self._device)
+        # y_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-y_ref*0.15, y_ref*0.15).to(device=self._device)
+        # # z_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-z_ref*0.15, z_ref*0.15).to(device=self._device)
+        # # #### Do not randomize z position ####
+        # z_rand = z_ref.repeat(len(env_ids),1)
+        # rand = torch.cat((x_rand, y_rand, z_rand), dim=1)
+        # goal_pos = goal_pos.repeat(len(env_ids),1) + rand
         self._goals.set_world_poses(goal_pos + self._env_pos[env_ids], indices=indices)
 
         # bookkeeping
