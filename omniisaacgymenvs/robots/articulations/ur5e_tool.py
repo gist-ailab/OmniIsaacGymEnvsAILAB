@@ -84,10 +84,11 @@ class UR5eTool(Robot):
         ]
 
 
-        # 여기서 default pos를 random으로 바꿔주서 tool 부분이 임의의 pose를 갖도록?
         drive_type = ["angular"] * 6 + ["linear"] + ["angular"] * 3
-        default_dof_pos = [math.degrees(x) for x in [0.0, -1.75, 1.05, -1.57, -1.57, 1.57,
-                                                     0.0, 0.0, 0.0, 0.0]]
+        # default_dof_pos = [math.degrees(x) for x in [0.0, -1.75, 1.05, -1.57, -1.57, 1.57,
+        #                                              0.0, 0.0, 0.0, 0.0]]
+        default_dof_pos = [-50, -40, 50, -100, -90, 110,
+                            5, 70, 0.0, -90]
         stiffness = [400*np.pi/180] * 6
         stiffness.extend([1000] * 4)
         damping = [80*np.pi/180] * 6
@@ -96,8 +97,8 @@ class UR5eTool(Robot):
                      100, 100, 100, 100]
                     #  0, 0, 0, 0]
         max_velocity = [math.degrees(x) for x in [2.175, 2.175, 2.175, 2.61, 2.61, 2.61,
-                                                  2.61, 2.61, 2.61, 2.61]]
-                                                #   0, 0, 0, 0]]
+                                                #   2.61, 2.61, 2.61, 2.61]]
+                                                  0, 0, 0, 0]]
 
 
         # dof_paths = [
@@ -122,7 +123,7 @@ class UR5eTool(Robot):
 
 
         for i, dof in enumerate(dof_paths):
-            if i > 5: continue
+            if i > 6: continue
             set_drive(
                 prim_path=f"{self.prim_path}/{dof}",
                 drive_type=drive_type[i],
