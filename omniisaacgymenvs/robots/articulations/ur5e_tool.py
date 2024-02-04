@@ -87,7 +87,7 @@ class UR5eTool(Robot):
         drive_type = ["angular"] * 6 + ["linear"] + ["angular"] * 3
         # default_dof_pos = [math.degrees(x) for x in [0.0, -1.75, 1.05, -1.57, -1.57, 1.57,
         #                                              0.0, 0.0, 0.0, 0.0]]
-        default_dof_pos = [-50, -40, 50, -100, -90, 110,
+        default_dof_pos = [-50, -40, 50, -100, -90, 130,
                             5, 70, 0.0, -90]
         stiffness = [400*np.pi/180] * 6
         stiffness.extend([1000] * 4)
