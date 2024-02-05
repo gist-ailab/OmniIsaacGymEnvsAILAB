@@ -97,7 +97,7 @@ cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
 # logging to TensorBoard and write checkpoints (in timesteps)
 cfg["experiment"]["write_interval"] = 80
 cfg["experiment"]["checkpoint_interval"] = 800
-cfg["experiment"]["directory"] = "runs/torch/Quadcopter"
+cfg["experiment"]["directory"] = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/Quadcopter"
 
 agent = PPO(models=models,
             memory=memory,
@@ -105,7 +105,8 @@ agent = PPO(models=models,
             observation_space=env.observation_space,
             action_space=env.action_space,
             device=device)
-
+# path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-Quadcopter-PPO", filename="agent.pt")
+# agent.load(path)
 
 # configure and instantiate the RL trainer
 cfg_trainer = {"timesteps": 16000, "headless": True}
@@ -114,7 +115,6 @@ trainer = SequentialTrainer(cfg=cfg_trainer, env=env, agents=agent)
 # start training
 trainer.train()
 
-
 # # ---------------------------------------------------------
 # # comment the code above: `trainer.train()`, and...
 # # uncomment the following lines to evaluate a trained agent
@@ -122,7 +122,8 @@ trainer.train()
 # from skrl.utils.huggingface import download_model_from_huggingface
 
 # # download the trained agent's checkpoint from Hugging Face Hub and load it
-# path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-Quadcopter-PPO", filename="agent.pt")
+# # path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-Quadcopter-PPO", filename="agent.pt")
+# path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/Quadcopter/24-02-05_21-14-30-377901_PPO/checkpoints/agent.pt'
 # agent.load(path)
 
 # # start evaluation
