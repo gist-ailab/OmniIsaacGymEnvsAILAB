@@ -12,7 +12,7 @@ from omniisaacgymenvs.robots.articulations.ur5e_tool import UR5eTool
 from omniisaacgymenvs.robots.articulations.views.ur5e_view import UR5eView
 
 import omni
-from omni.isaac.core.prims import RigidPrimView
+from omni.isaac.core.prims import RigidPrimView, GeometryPrimView
 # from omni.isaac.core.articulations import ArticulationView
 from omni.isaac.core.objects import DynamicCylinder, DynamicSphere, DynamicCuboid, VisualCone, DynamicCone
 # from omni.isaac.core.materials import PhysicsMaterial
@@ -54,8 +54,8 @@ class BasicMovingTargetTask(RLTask):
         self.current_target_position = None
         self.target_moving_distance = None
         
-        self.alpha = 0.3
-        self.beta = 0.7
+        self.alpha = 0.4
+        self.beta = 0.6
         self.scaler_a = 100
         self.scaler_b = 200
         self.eta = 0.15
@@ -83,6 +83,7 @@ class BasicMovingTargetTask(RLTask):
             raise ValueError("Invalid control space: {}".format(self._control_space))
 
         self._flange_link = "flange_tool_rot_x"
+
         
         RLTask.__init__(self, name, env)
 
@@ -103,7 +104,8 @@ class BasicMovingTargetTask(RLTask):
         self._dof_vel_scale = self._task_cfg["env"]["dofVelocityScale"]
 
         self._control_space = self._task_cfg["env"]["controlSpace"]
-        self._goal_position = self._task_cfg["env"]["goal"]
+        self._goal_mark = self._task_cfg["env"]["goal"]
+        self._target_position = self._task_cfg["env"]["target"]
 
         
     def set_up_scene(self, scene) -> None:
@@ -188,16 +190,20 @@ class BasicMovingTargetTask(RLTask):
         #                                                         prim_path="/World/physics_materials/target_material",
         #                                                         static_friction=0.01, dynamic_friction=0.01),
         #                        )
+        self.radius = 0.04
         target = DynamicCylinder(prim_path=self.default_zero_env_path + "/target",
                                  name="target",
-                                 radius=0.04,
+                                 radius=self.radius,
                                  height=0.05,
                                  density=1,
                                  color=torch.tensor([255, 0, 0]),
                                  mass=1,
+                                #  physics_material=PhysicsMaterial(
+                                #                                   prim_path="/World/physics_materials/target_material",
+                                #                                   static_friction=0.05, dynamic_friction=0.6)
                                  physics_material=PhysicsMaterial(
                                                                   prim_path="/World/physics_materials/target_material",
-                                                                  static_friction=0.05, dynamic_friction=0.8)
+                                                                  static_friction=0.02, dynamic_friction=0.3)
                                  )
         
         self._sim_config.apply_articulation_settings("target",
@@ -244,7 +250,8 @@ class BasicMovingTargetTask(RLTask):
         self.flange_pos, self.flange_rot = self._flanges.get_local_poses()
         tool_pos, tool_rot = self._tools.get_local_poses()
         target_pos, target_rot = self._targets.get_local_poses()
-        goal_pos, goal_rot = self._goals.get_local_poses()
+        goal_pos, _ = self._goals.get_local_poses()
+        goal_pos[:,2] = self._target_position[-1]
 
         self.tool_pos = tool_pos    # used for is_done() method
 
@@ -271,18 +278,18 @@ class BasicMovingTargetTask(RLTask):
                                                   ord=2, dim=1)
 
         if self.previous_tool_target_distance == None:
-            self.current_tool_target_distance = LA.norm(tool_pos - target_pos, ord=2, dim=1)
-            self.initial_tool_target_distance = LA.norm(tool_pos - target_pos, ord=2, dim=1)
+            self.current_tool_target_distance = LA.norm(tool2target, ord=2, dim=1)
+            self.initial_tool_target_distance = LA.norm(tool2target, ord=2, dim=1)
             self.previous_tool_target_distance = self.current_tool_target_distance
-            self.current_target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
-            self.initial_target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
+            self.current_target_goal_distance = LA.norm(target2goal, ord=2, dim=1)
+            self.initial_target_goal_distance = LA.norm(target2goal, ord=2, dim=1)
             self.previous_target_goal_distance = self.current_target_goal_distance
         
         else:
             self.previous_tool_target_distance = self.current_tool_target_distance
             self.previous_target_goal_distance = self.current_target_goal_distance
-            self.current_tool_target_distance = LA.norm(tool_pos - target_pos, ord=2, dim=1)
-            self.current_target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
+            self.current_tool_target_distance = LA.norm(tool2target, ord=2, dim=1)
+            self.current_target_goal_distance = LA.norm(target2goal, ord=2, dim=1)
 
         # dof_pos_scaled = 2.0 * (robot_dof_pos - self.robot_dof_lower_limits) \
         #     / (self.robot_dof_upper_limits - self.robot_dof_lower_limits) - 1.0
@@ -304,8 +311,10 @@ class BasicMovingTargetTask(RLTask):
 
         # tool, target, goal state
         self.obs_buf[:, 20:23] = tool_pos
-        self.obs_buf[:, 23:26] = tool2target
-        self.obs_buf[:, 26:29] = target2goal
+        # self.obs_buf[:, 23:26] = tool2target
+        # self.obs_buf[:, 26:29] = target2goal
+        self.obs_buf[:, 23:26] = target_pos
+        self.obs_buf[:, 26:29] = goal_pos
         # self.obs_buf[:, 22] = self.current_tool_target_distance
         # self.obs_buf[:, 23] = self.current_target_goal_distance
 
@@ -329,7 +338,8 @@ class BasicMovingTargetTask(RLTask):
         elif self._control_space == "cartesian":
             # goal_position = self.flange_pos + actions / 100.0
 
-            goal_position = self.flange_pos + self.actions[:, :3] / 40.0
+            # goal_position = self.flange_pos + self.actions[:, :3] / 30.0
+            goal_position = self.flange_pos + self.actions[:, :3] / 10.0
             goal_orientation = self.flange_rot + self.actions[:, 3:] / 70.0
             delta_dof_pos = omniverse_isaacgym_utils.ik(
                                                         jacobian_end_effector=self.jacobians[:, self._robots.body_names.index(self._flange_link)-1, :, :],
@@ -378,7 +388,7 @@ class BasicMovingTargetTask(RLTask):
         self._robots.set_joint_velocities(dof_vel, indices=indices)
 
         # reset target
-        position = torch.tensor([0.85, -0.45, 0.03], device=self._device)
+        position = torch.tensor(self._target_position, device=self._device)        
         # # x, y randomize 는 ±0.1로 uniform random
         # z_ref = torch.abs(position[2])
         # # generate uniform random values for randomizing target position
@@ -399,7 +409,7 @@ class BasicMovingTargetTask(RLTask):
         # self._targets.enable_rigid_body_physics()
 
         # reset goal
-        goal_pos = torch.tensor(self._goal_position, device=self._device)
+        goal_mark_pos = torch.tensor(self._goal_mark, device=self._device)
         # # x, y randomize 는 ±0.1로 uniform random
         # z_ref = torch.abs(goal_pos[2])
         # # # generate uniform random values for randomizing goal position
@@ -409,7 +419,7 @@ class BasicMovingTargetTask(RLTask):
         # z_rand = z_ref.repeat(len(env_ids),1)
         # rand = torch.cat((x_rand, y_rand, z_rand), dim=1)
         # goal_pos = goal_pos.repeat(len(env_ids),1) + rand
-        self._goals.set_world_poses(goal_pos + self._env_pos[env_ids], indices=indices)
+        self._goals.set_world_poses(goal_mark_pos + self._env_pos[env_ids], indices=indices)
 
         # bookkeeping
         self.reset_buf[env_ids] = 0
@@ -431,17 +441,15 @@ class BasicMovingTargetTask(RLTask):
         self.reset_idx(indices)
 
     def calculate_metrics(self) -> None:
-        # self.rew_buf[:] = -self._computed_tool_target_distance - self._computed_target_goal_distance
-
-        # tool_target_distance_reward = 1 / (self.current_tool_target_distance + 1)
-        # target_goal_distance_reward = 1 / (self.current_target_goal_distance + 1)
-        # x에는 episode 처음 거리에서 지금 거리를 빼준다.
+        init_t_t_d = self.initial_tool_target_distance
+        cur_t_t_d = self.current_tool_target_distance
+        init_t_g_d = self.initial_target_goal_distance
+        cur_t_g_d = self.current_target_goal_distance
         exp_const = torch.exp(torch.tensor(-3, device=self._device))
         tool_target_distance_reward = exp_const * \
-                                      torch.exp(3*(self.initial_tool_target_distance - self.current_tool_target_distance))
+                                      torch.exp(3*(-( cur_t_t_d/init_t_t_d -1 )))
         target_goal_distance_reward = exp_const * \
-                                      torch.exp(3*(self.initial_target_goal_distance - self.current_target_goal_distance))
-
+                                      torch.exp(3*(-( cur_t_g_d/init_t_g_d -1 )))
 
 
         ## TODO: 아래 두 항은 normalize를 어떻게 해주어야 할지 감이 잘 안옴...
@@ -449,57 +457,42 @@ class BasicMovingTargetTask(RLTask):
         delta_tool_target = self.previous_tool_target_distance - self.current_tool_target_distance
         delta_target_goal = self.previous_target_goal_distance - self.current_target_goal_distance
 
-        # punish to go out of workspace
-        check_x_min = (self.tool_pos[:, 0] > 0.55).unsqueeze(1)
-        check_x_max = (self.tool_pos[:, 0] < 0.95).unsqueeze(1)
-        check_y_min = (self.tool_pos[:, 1] > -0.55).unsqueeze(1)
-        check_y_max = (self.tool_pos[:, 1] < 0.35).unsqueeze(1)
-        check_z_max = (self.tool_pos[:, 2] < 0.18).unsqueeze(1)
-        out_of_workspace_check = torch.cat((check_x_min, check_x_max, check_y_min, check_y_max, check_z_max), dim=1)
-        punishing_out_of_workspace = -torch.logical_not(torch.prod(out_of_workspace_check, dim=1)).float()
-
-        # lower_than_0 = punishing_out_of_workspace < 0
-        # num_elements_lower_than = torch.sum(lower_than_0).item()
-        # if num_elements_lower_than > 0:
-        #     print(f"punishing_out_of_workspace: {punishing_out_of_workspace}")
-        #     print(f"num_elements_lower_than: {num_elements_lower_than}")
+        # # punish to go out of workspace
+        # check_x_min = (self.tool_pos[:, 0] > 0.55).unsqueeze(1)
+        # check_x_max = (self.tool_pos[:, 0] < 0.95).unsqueeze(1)
+        # check_y_min = (self.tool_pos[:, 1] > -0.55).unsqueeze(1)
+        # check_y_max = (self.tool_pos[:, 1] < 0.35).unsqueeze(1)
+        # check_z_max = (self.tool_pos[:, 2] < 0.18).unsqueeze(1)
+        # out_of_workspace_check = torch.cat((check_x_min, check_x_max, check_y_min, check_y_max, check_z_max), dim=1)
+        # punishing_out_of_workspace = -torch.logical_not(torch.prod(out_of_workspace_check, dim=1)).float() * 3
 
         self.completion_reward = torch.zeros(self._num_envs).to(self._device)
-        self.completion_reward[self.current_target_goal_distance<0.06] = 1
+        self.completion_reward[self.current_target_goal_distance<0.03] = 1
         self.rew_buf[:] = self.alpha * tool_target_distance_reward + \
                           self.beta * target_goal_distance_reward + \
-                          self.completion_reward + punishing_out_of_workspace
+                          self.completion_reward
                         #   self.scaler_a * delta_tool_target + \
-                        #   self.scaler_b * delta_target_goal
-                        #   punishing_out_of_workspace
+                        #   self.scaler_b * delta_target_goal + \
 
 
     def is_done(self) -> None:
-        self.reset_buf.fill_(0)
-        # target reached
-        # self.reset_buf = torch.where(self._computed_target_goal_distance <= 0.035, torch.ones_like(self.reset_buf), self.reset_buf)
-        self.reset_buf = torch.where(self.current_target_goal_distance <= 0.05, torch.ones_like(self.reset_buf), self.reset_buf)
-        # max episode length
-        self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
+        ones = torch.ones_like(self.reset_buf)
+        reset = torch.zeros_like(self.reset_buf)
 
-        # workspace regularization
-        tool_x_min = torch.min(self.tool_pos[:, 0])
-        tool_y_min = torch.min(self.tool_pos[:, 1])
-        tool_x_max = torch.max(self.tool_pos[:, 0])
-        tool_y_max = torch.max(self.tool_pos[:, 1])
-        tool_z_max = torch.max(self.tool_pos[:, 2])
-        target_x_min = torch.min(self.current_target_position[:, 0])
-        target_y_min = torch.min(self.current_target_position[:, 1])
-        target_x_max = torch.max(self.current_target_position[:, 0])
-        target_y_max = torch.max(self.current_target_position[:, 1])
-        target_z_max = torch.max(self.current_target_position[:, 2])
-        self.reset_buf = torch.where(tool_x_min < 0.5, torch.ones_like(self.reset_buf), self.reset_buf)
-        self.reset_buf = torch.where(tool_y_min < -0.6, torch.ones_like(self.reset_buf), self.reset_buf)
-        self.reset_buf = torch.where(tool_x_max > 1.0, torch.ones_like(self.reset_buf), self.reset_buf)
-        self.reset_buf = torch.where(tool_y_max > 0.4, torch.ones_like(self.reset_buf), self.reset_buf)
-        self.reset_buf = torch.where(tool_z_max > 0.3, torch.ones_like(self.reset_buf), self.reset_buf)
-        self.reset_buf = torch.where(target_x_min < 0.5, torch.ones_like(self.reset_buf), self.reset_buf)
-        self.reset_buf = torch.where(target_y_min < -0.6, torch.ones_like(self.reset_buf), self.reset_buf)
-        self.reset_buf = torch.where(target_x_max > 1.0, torch.ones_like(self.reset_buf), self.reset_buf)
-        self.reset_buf = torch.where(target_y_max > 0.3, torch.ones_like(self.reset_buf), self.reset_buf)
-        self.reset_buf = torch.where(target_z_max > 0.2, torch.ones_like(self.reset_buf), self.reset_buf)
+        # # workspace regularization
+        reset = torch.where(self.tool_pos[:, 0] < 0.45, ones, reset)
+        reset = torch.where(self.tool_pos[:, 1] < -0.8, ones, reset)
+        reset = torch.where(self.tool_pos[:, 0] > 1.2, ones, reset)
+        reset = torch.where(self.tool_pos[:, 1] > 0.4, ones, reset)
+        reset = torch.where(self.tool_pos[:, 2] > 0.5, ones, reset)
+        reset = torch.where(self.current_target_position[:, 0] < 0.45, ones, reset)
+        reset = torch.where(self.current_target_position[:, 1] < -0.8, ones, reset)
+        reset = torch.where(self.current_target_position[:, 0] > 1.2, ones, reset)
+        reset = torch.where(self.current_target_position[:, 1] > 0.4, ones, reset)
+        reset = torch.where(self.current_target_position[:, 2] > 0.5, ones, reset)
+
+        # target reached
+        reset = torch.where(self.current_target_goal_distance < 0.02, ones, reset)
+
+        # max episode length
+        self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, ones, reset)
