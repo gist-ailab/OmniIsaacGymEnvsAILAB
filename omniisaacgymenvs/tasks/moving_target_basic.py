@@ -256,19 +256,20 @@ class BasicMovingTargetTask(RLTask):
 
         self.tool_pos = tool_pos    # used for is_done() method
 
-        # normalize robot_dof_pos and robot_dof_vel
-        x_min = 0.45
-        x_max = 1.2
-        y_min = -0.8
-        y_max = 0.4
-        self.flange_pos[:, 0] = (self.flange_pos[:, 0] - x_min) / (x_max - x_min)   # normalize x-axis
-        self.flange_pos[:, 1] = (self.flange_pos[:, 1] - y_min) / (y_max - y_min)   # normalize y-axis
-        tool_pos[:, 0] = (tool_pos[:, 0] - x_min) / (x_max - x_min)   # normalize x-axis
-        tool_pos[:, 1] = (tool_pos[:, 1] - y_min) / (y_max - y_min)   # normalize y-axis
-        target_pos[:, 0] = (target_pos[:, 0] - x_min) / (x_max - x_min)
-        target_pos[:, 1] = (target_pos[:, 1] - y_min) / (y_max - y_min)
-        goal_pos[:, 0] = (goal_pos[:, 0] - x_min) / (x_max - x_min)
-        goal_pos[:, 1] = (goal_pos[:, 1] - y_min) / (y_max - y_min)
+        # ### normalize flange_pos, tool_pos, target_pos, goal_pos
+        # x_min = 0.45
+        # x_max = 1.2
+        # y_min = -0.8
+        # y_max = 0.4
+        # self.flange_pos[:, 0] = (self.flange_pos[:, 0] - x_min) / (x_max - x_min)   # normalize x-axis
+        # self.flange_pos[:, 1] = (self.flange_pos[:, 1] - y_min) / (y_max - y_min)   # normalize y-axis
+        # tool_pos[:, 0] = (tool_pos[:, 0] - x_min) / (x_max - x_min)   # normalize x-axis
+        # tool_pos[:, 1] = (tool_pos[:, 1] - y_min) / (y_max - y_min)   # normalize y-axis
+        # target_pos[:, 0] = (target_pos[:, 0] - x_min) / (x_max - x_min)
+        # target_pos[:, 1] = (target_pos[:, 1] - y_min) / (y_max - y_min)
+        # goal_pos[:, 0] = (goal_pos[:, 0] - x_min) / (x_max - x_min)
+        # goal_pos[:, 1] = (goal_pos[:, 1] - y_min) / (y_max - y_min)
+        # ### normalize flange_pos, tool_pos, target_pos, goal_pos
 
         tool2target = target_pos - tool_pos
         target2goal = goal_pos - target_pos
@@ -457,8 +458,8 @@ class BasicMovingTargetTask(RLTask):
         init_t_g_d = self.initial_target_goal_distance
         cur_t_g_d = self.current_target_goal_distance
         euler_num = torch.exp(torch.tensor(1., device=self._device))
-        tool_target_distance_reward = self.relu((cur_t_t_d - init_t_t_d)*init_t_t_d)
-        target_goal_distance_reward = self.relu((cur_t_g_d - init_t_g_d)*init_t_g_d)
+        tool_target_distance_reward = self.relu(-(cur_t_t_d - init_t_t_d)/init_t_t_d)
+        target_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d)
         # tool_target_distance_reward = torch.exp(-(euler_num/init_t_t_d)*cur_t_t_d)
         # target_goal_distance_reward = torch.exp(-(euler_num/init_t_g_d)*cur_t_g_d)
 
