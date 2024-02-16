@@ -70,6 +70,12 @@ class BasicMovingTargetTask(RLTask):
         self.tool_rot_z = 0     # 0 degree
         self.tool_rot_y = -1.5707 # -90 degree
 
+        # workspace 2D boundary
+        self.x_min = 0.45
+        self.x_max = 1.2
+        self.y_min = -0.8
+        self.y_max = 0.4
+
         # observation and action space
         # self._num_observations = 16
         # self._num_observations = 19
@@ -254,22 +260,24 @@ class BasicMovingTargetTask(RLTask):
         goal_pos, _ = self._goals.get_local_poses()
         goal_pos[:,2] = self._target_position[-1]
 
-        self.tool_pos = tool_pos    # used for is_done() method
+        ### used for is_done() method
 
-        # ### normalize flange_pos, tool_pos, target_pos, goal_pos
-        # x_min = 0.45
-        # x_max = 1.2
-        # y_min = -0.8
-        # y_max = 0.4
-        # self.flange_pos[:, 0] = (self.flange_pos[:, 0] - x_min) / (x_max - x_min)   # normalize x-axis
-        # self.flange_pos[:, 1] = (self.flange_pos[:, 1] - y_min) / (y_max - y_min)   # normalize y-axis
-        # tool_pos[:, 0] = (tool_pos[:, 0] - x_min) / (x_max - x_min)   # normalize x-axis
-        # tool_pos[:, 1] = (tool_pos[:, 1] - y_min) / (y_max - y_min)   # normalize y-axis
-        # target_pos[:, 0] = (target_pos[:, 0] - x_min) / (x_max - x_min)
-        # target_pos[:, 1] = (target_pos[:, 1] - y_min) / (y_max - y_min)
-        # goal_pos[:, 0] = (goal_pos[:, 0] - x_min) / (x_max - x_min)
-        # goal_pos[:, 1] = (goal_pos[:, 1] - y_min) / (y_max - y_min)
-        # ### normalize flange_pos, tool_pos, target_pos, goal_pos
+
+        self.tool_pos = copy.deepcopy(tool_pos)
+        self.target_pos = copy.deepcopy(target_pos)
+        self.goal_pos = copy.deepcopy(goal_pos)
+        self.target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
+
+        ### normalize flange_pos, tool_pos, target_pos, goal_pos
+        self.flange_pos[:, 0] = (self.flange_pos[:, 0] - self.x_min) / (self.x_max - self.x_min)   # normalize x-axis
+        self.flange_pos[:, 1] = (self.flange_pos[:, 1] - self.y_min) / (self.y_max - self.y_min)   # normalize y-axis
+        tool_pos[:, 0] = (tool_pos[:, 0] - self.x_min) / (self.x_max - self.x_min)   # normalize x-axis
+        tool_pos[:, 1] = (tool_pos[:, 1] - self.y_min) / (self.y_max - self.y_min)   # normalize y-axis
+        target_pos[:, 0] = (target_pos[:, 0] - self.x_min) / (self.x_max - self.x_min)
+        target_pos[:, 1] = (target_pos[:, 1] - self.y_min) / (self.y_max - self.y_min)
+        goal_pos[:, 0] = (goal_pos[:, 0] - self.x_min) / (self.x_max - self.x_min)
+        goal_pos[:, 1] = (goal_pos[:, 1] - self.y_min) / (self.y_max - self.y_min)
+        ### normalize flange_pos, tool_pos, target_pos, goal_pos
 
         tool2target = target_pos - tool_pos
         target2goal = goal_pos - target_pos
@@ -302,19 +310,19 @@ class BasicMovingTargetTask(RLTask):
         #     / (self.robot_dof_upper_limits - self.robot_dof_lower_limits) - 1.0   # normalized by [-1, 1]
         dof_pos_scaled = (robot_dof_pos - self.robot_dof_lower_limits) \
                         /(self.robot_dof_upper_limits - self.robot_dof_lower_limits)    # normalized by [0, 1]
-        # dof_pos_scaled = robot_dof_pos    # non-normalized
+        dof_pos_scaled = robot_dof_pos    # non-normalized
 
         # # normalize robot_dof_vel
         dof_vel_scaled = robot_dof_vel * self._dof_vel_scale
-        generalization_noise = torch.rand((dof_vel_scaled.shape[0], 6), device=self._device) + 0.5
-        # dof_vel_scaled = robot_dof_vel    # non-normalized
+        # generalization_noise = torch.rand((dof_vel_scaled.shape[0], 6), device=self._device) + 0.5
+        dof_vel_scaled = robot_dof_vel    # non-normalized
 
         self.obs_buf[:, 0] = self.progress_buf / self._max_episode_length
         
         # robot state
         self.obs_buf[:, 1:7] = dof_pos_scaled[:, :6]
-        self.obs_buf[:, 7:13] = dof_vel_scaled[:, :6] * generalization_noise
-        # self.obs_buf[:, 7:13] = dof_vel_scaled[:, :6]
+        # self.obs_buf[:, 7:13] = dof_vel_scaled[:, :6] * generalization_noise
+        self.obs_buf[:, 7:13] = dof_vel_scaled[:, :6]
         self.obs_buf[:, 13:16] = self.flange_pos
         self.obs_buf[:, 16:20] = self.flange_rot
 
@@ -492,19 +500,19 @@ class BasicMovingTargetTask(RLTask):
         reset = torch.zeros_like(self.reset_buf)
 
         # # workspace regularization
-        reset = torch.where(self.tool_pos[:, 0] < 0.45, ones, reset)
-        reset = torch.where(self.tool_pos[:, 1] < -0.8, ones, reset)
-        reset = torch.where(self.tool_pos[:, 0] > 1.2, ones, reset)
-        reset = torch.where(self.tool_pos[:, 1] > 0.4, ones, reset)
+        reset = torch.where(self.tool_pos[:, 0] < self.x_min, ones, reset)
+        reset = torch.where(self.tool_pos[:, 1] < self.y_min, ones, reset)
+        reset = torch.where(self.tool_pos[:, 0] > self.x_max, ones, reset)
+        reset = torch.where(self.tool_pos[:, 1] > self.y_max, ones, reset)
         reset = torch.where(self.tool_pos[:, 2] > 0.5, ones, reset)
-        reset = torch.where(self.current_target_position[:, 0] < 0.45, ones, reset)
-        reset = torch.where(self.current_target_position[:, 1] < -0.8, ones, reset)
-        reset = torch.where(self.current_target_position[:, 0] > 1.2, ones, reset)
-        reset = torch.where(self.current_target_position[:, 1] > 0.4, ones, reset)
-        reset = torch.where(self.current_target_position[:, 2] > 0.5, ones, reset)
+        reset = torch.where(self.target_pos[:, 0] < self.x_min, ones, reset)
+        reset = torch.where(self.target_pos[:, 1] < self.y_min, ones, reset)
+        reset = torch.where(self.target_pos[:, 0] > self.x_max, ones, reset)
+        reset = torch.where(self.target_pos[:, 1] > self.y_max, ones, reset)
+        reset = torch.where(self.target_pos[:, 2] > 0.5, ones, reset)
 
         # target reached
-        reset = torch.where(self.current_target_goal_distance < 0.03, ones, reset)
+        reset = torch.where(self.target_goal_distance < 0.03, ones, reset)
 
         # max episode length
         self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, ones, reset)
