@@ -58,28 +58,28 @@ class PCDReachingTargetTask(RLTask):
         self.dt = 1 / 120.0
         self._env = env      
 
-        self.previous_tool_target_distance = None
-        self.current_tool_target_distance = None
-        self.previous_target_goal_distance = None
-        self.current_target_goal_distance = None
-        self.previous_target_position = None
-        self.current_target_position = None
-        self.target_moving_distance = None
+        self.previous_tool_goal_distance = None
+        self.current_tool_goal_distance = None
+        self.previous_tool_position = None
+        self.current_tool_position = None
+        self.tool_moving_distance = None
         
         self.alpha = 0.15
         self.beta = 0.5
         self.gamma = 0
         self.zeta = 0.1
         self.eta = 0.25
-        self.punishment = -1
+        self.relu = torch.nn.ReLU()
 
         self.stage = omni.usd.get_context().get_stage()        
 
         self._pcd_sampling_num = self._task_cfg["sim"]["point_cloud_samples"]
+        self._num_pcd_masks = 1
         
         # observation and action space
-        pcd_observations = self._pcd_sampling_num * 2 * 3     # 2 is a number of point cloud masks and 3 is a cartesian coordinate
-        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 3 + 3
+        # pcd_observations = self._pcd_sampling_num * 2 * 3     # 2 is a number of point cloud masks and 3 is a cartesian coordinate
+        pcd_observations = self._pcd_sampling_num * self._num_pcd_masks * 3     # 1 is a number of point cloud masks and 3 is a cartesian coordinate
+        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 3
         '''
         refer to observations in get_observations()
         dof_pos_scaled,                               # [NE, 6]
@@ -130,13 +130,12 @@ class PCDReachingTargetTask(RLTask):
         self._dof_vel_scale = self._task_cfg["env"]["dofVelocityScale"]
 
         self._control_space = self._task_cfg["env"]["controlSpace"]
-        self._goal_position = self._task_cfg["env"]["goal"]
+        self._goal_mark = self._task_cfg["env"]["goal"]
         self._pcd_normalization = self._task_cfg["sim"]["point_cloud_normalization"]
 
         
     def set_up_scene(self, scene) -> None:
         self.get_robot()
-        self.get_target()
         self.get_goal()
         # self.get_lidar(idx=0, scene=scene)
 
@@ -147,16 +146,14 @@ class PCDReachingTargetTask(RLTask):
         self._robots = UR5eView(prim_paths_expr="/World/envs/.*/robot", name="robot_view")
         # flanges view
         self._flanges = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/{self._flange_link}", name="end_effector_view")
-        # target view
-        self._targets = RigidPrimView(prim_paths_expr="/World/envs/.*/target", name="target_view", reset_xform_properties=False)        
         # goal view
         self._goals = RigidPrimView(prim_paths_expr="/World/envs/.*/goal", name="goal_view", reset_xform_properties=False)
 
-        scene.add(self._goals)
         scene.add(self._robots)
         scene.add(self._flanges)
-        scene.add(self._targets)
-        
+        scene.add(self._goals)
+
+        self.init_data()        
         
         # point cloud view
         self.render_products = []
@@ -170,7 +167,7 @@ class PCDReachingTargetTask(RLTask):
 
         # Used to get depth data from the camera
         for i in range(self._num_envs):
-            self.rep.get.camera()
+            self.rep.get.camera()   # TODO: 여기에 prim path를 넣어야 할 수도 있다.
             # Get the parameters of the camera via links below
             # https://learn.microsoft.com/en-us/answers/questions/201906/pixel-size-of-rgb-and-tof-camera#:~:text=Pixel%20Size%20for,is%20~2.3%20mm
             # https://docs.omniverse.nvidia.com/isaacsim/latest/features/sensors_simulation/isaac_sim_sensors_camera.html#calibrated-camera-sensors
@@ -214,32 +211,25 @@ class PCDReachingTargetTask(RLTask):
                                                                  # clipping_range=(0.5, 3.86),
                                                                  clipping_range=(0.5, 3),
                                                                  # TODO: clipping range 조절해서 환경이 서로 안 겹치게 하자.
+                                                                 parent=self.stage.GetPrimAtPath(f"/World/envs/env_{i}"),
+                                                                 name=f"camera_{j}"
                                                                  )
                 
                 render_product = self.rep.create.render_product(locals()[f"camera_{j}"], resolution=(self.camera_width, self.camera_height))
                 self.render_products.append(render_product)
 
-            # camera_position = (2 + env_pos[i][0], 1.5 + env_pos[i][1], 0.5)
-            # self.camera_positions[i] = camera_position
-            # self.camera_1_orientations = (0, -10, 60)
-            # # self.camera_orientations = (0, 0, 60)
             # camera = self.rep.create.camera(
             #     # position=(0.5 + env_pos[i][0], 1.5 + env_pos[i][1], 0.4),
-            #     # position=(2 + env_pos[i][0], 1.5 + env_pos[i][1], 0.5),
-            #     position=self.camera_positions,
-            #     rotation=self.camera_orientations,
+            #     position=(2 + env_pos[i][0], 1.5 + env_pos[i][1], 0.5),
+            #     rotation=(0, -10, 60),
 
             #     focal_length=1.8,
             #     focus_distance=3.86,
             #     horizontal_aperture=2.24,
             #     # vertical_aperture=0.2016,
-            #     clipping_range=(0.5, 3.86),
-                
+            #     clipping_range=(0.5, 3.86),                
             #     )
             # render_product = self.rep.create.render_product(camera, resolution=(self.camera_width, self.camera_height))
-            # distance_to_camera = self.rep.AnnotatorRegistry.get_annotator("distance_to_camera")
-            # distance_to_image_plane = self.rep.AnnotatorRegistry.get_annotator("distance_to_image_plane")
-            # pointcloud = self.rep.AnnotatorRegistry.get_annotator("pointcloud")
 
             # self.render_products.append(render_product)
 
@@ -270,7 +260,7 @@ class PCDReachingTargetTask(RLTask):
         #     self._robot_semantics[i].CreateSemanticDataAttr()
         #     self._robot_semantics[i].GetSemanticTypeAttr().Set("class")
         #     self._robot_semantics[i].GetSemanticDataAttr().Set(f"robot_{i}")
-        #     add_update_semantics(robot_prim, '0')
+        #     # add_update_semantics(robot_prim, '0')
 
 
         # get tool semantic data
@@ -282,20 +272,9 @@ class PCDReachingTargetTask(RLTask):
             self._tool_semantics[i].CreateSemanticDataAttr()
             self._tool_semantics[i].GetSemanticTypeAttr().Set("class")
             self._tool_semantics[i].GetSemanticDataAttr().Set(f"tool_{i}")
-            add_update_semantics(tool_prim, '1')    # added for fixing the order of semantic index
+        #     add_update_semantics(tool_prim, '1')    # added for fixing the order of semantic index
 
-        # get target object semantic data
-        self._target_semantics = {}
-        for i in range(self._num_envs):
-            target_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/target")
-            self._target_semantics[i] = Semantics.SemanticsAPI.Apply(target_prim, "Semantics")
-            self._target_semantics[i].CreateSemanticTypeAttr()
-            self._target_semantics[i].CreateSemanticDataAttr()
-            self._target_semantics[i].GetSemanticTypeAttr().Set("class")
-            self._target_semantics[i].GetSemanticDataAttr().Set(f"target_{i}")
-            add_update_semantics(target_prim, '2')  # added for fixing the order of semantic index
-
-        self.init_data()
+        
 
 
     def initialize_views(self, scene):
@@ -304,19 +283,15 @@ class PCDReachingTargetTask(RLTask):
             scene.remove("robot_view", registry_only=True)
         if scene.object_exist("end_effector_view"):
             scene.remove("end_effector_view", registry_only=True)
-        if scene.object_exist("target_view"):
-            scene.remove("target_view", registry_only=True)
         if scene.object_exist("goal_view"):
             scene.remove("goal_view", registry_only=True)
 
         self._robots = UR5eView(prim_paths_expr="/World/envs/.*/robot", name="robot_view")
         self._flanges = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/{self._flange_link}", name="end_effector_view")
-        self._targets = RigidPrimView(prim_paths_expr="/World/envs/.*/target", name="target_view", reset_xform_properties=False)
         self._goals = RigidPrimView(prim_paths_expr="/World/envs/.*/goal", name="goal_view", reset_xform_properties=False)
 
         scene.add(self._robots)
         scene.add(self._flanges)
-        scene.add(self._targets)
         scene.add(self._goals)
         
         self.init_data()
@@ -329,20 +304,6 @@ class PCDReachingTargetTask(RLTask):
         self._sim_config.apply_articulation_settings("robot",
                                                      get_prim_at_path(robot.prim_path),
                                                      self._sim_config.parse_actor_config("robot"))
-
-    def get_target(self):
-        target = DynamicCuboid(prim_path=self.default_zero_env_path + "/target",
-                               name="target",
-                               size=0.07,
-                               density=1,
-                               color=torch.tensor([255, 0, 0]),
-                            #    physics_material=PhysicsMaterial(prim_path=physics_material_path,
-                            #                                     static_friction=0.1, dynamic_friction=0.1),
-                               )
-        
-        self._sim_config.apply_articulation_settings("target",
-                                                     get_prim_at_path(target.prim_path),
-                                                     self._sim_config.parse_actor_config("target"))
 
     def get_goal(self):
         goal = DynamicSphere(prim_path=self.default_zero_env_path + "/goal",
@@ -460,7 +421,10 @@ class PCDReachingTargetTask(RLTask):
             pointcloud = self.pointcloud_listener.get_pointcloud_data()
             # TODO: pointcloud로부터 각 환경의 cube 위치를 가져와야 한다.
         except:
-            pointcloud = torch.rand((self._num_envs, 200, 3), device=self._device)
+            pointcloud = torch.rand((self._num_envs, self._pcd_sampling_num, 3), device=self._device)
+
+        if pointcloud.shape[0] == 0:
+            pointcloud = torch.rand((self._num_envs, self._pcd_sampling_num, 3), device=self._device)
 
         '''
         아래 순서로 최종 obs_buf에 concat. 첫 차원은 환경 갯수
@@ -479,42 +443,35 @@ class PCDReachingTargetTask(RLTask):
         flange_pos, flange_rot = self._flanges.get_local_poses()
         # target_pos, target_rot = self._targets.get_local_poses()    # TODO: 물체의 pose는 명시적인 것이 아닌, pcd를 이용하도록 하자.
         goal_pos, goal_rot = self._goals.get_local_poses()
+        self.goal_pos = copy.deepcopy(goal_pos)
 
-        # get target position from point cloud
-        target_obj_pcd = pointcloud[:, -90:, :]
-        target_pos = torch.mean(target_obj_pcd, dim=1)
+        # get tool position from point cloud
+        self.tool_pos = torch.mean(pointcloud, dim=1)
 
-        if self.previous_target_position == None:
-            self.target_moving_distance = torch.zeros((self._num_envs), device=self._device)
-            self.current_target_position = target_pos
+        if self.previous_tool_position is None:
+            self.initial_tool_goal_distance = LA.norm(self.goal_pos - self.tool_pos, ord=2, dim=1)
+            self.current_tool_goal_distance = LA.norm(self.goal_pos - self.tool_pos, ord=2, dim=1)
+            self.previous_tool_goal_distance = self.current_tool_goal_distance
         else:
-            self.previous_target_position = self.current_target_position
-            self.current_target_position = target_pos
-            self.target_moving_distance = LA.norm(self.previous_target_position - self.current_target_position,
-                                                  ord=2, dim=1)
+            self.previous_tool_goal_distance = self.current_tool_goal_distance
+            self.current_tool_goal_distance = LA.norm(self.goal_pos - self.tool_pos, ord=2, dim=1)
 
-        # compute distance for calculate_metrics() and is_done()
-        if self.previous_tool_target_distance == None:
-            self.current_tool_target_distance = LA.norm(flange_pos - target_pos, ord=2, dim=1)
-            self.previous_tool_target_distance = self.current_tool_target_distance
-            self.current_target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
-            self.previous_target_goal_distance = self.current_target_goal_distance
-        
-        else:
-            self.previous_tool_target_distance = self.current_tool_target_distance
-            self.previous_target_goal_distance = self.current_target_goal_distance
-            self.current_tool_target_distance = LA.norm(flange_pos - target_pos, ord=2, dim=1)
-            self.current_target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
+        self.current_tool_target_distance = LA.norm(self.tool_pos - self.goal_pos, ord=2, dim=1)
 
         robot_body_dof_lower_limits = self.robot_dof_lower_limits[:6]
         robot_body_dof_upper_limits = self.robot_dof_upper_limits[:6]
 
-        # the scaler below comes from the CabinetTask
-        dof_pos_scaled = 2.0 * (robot_dof_pos - robot_body_dof_lower_limits) \
-            / (robot_body_dof_upper_limits - robot_body_dof_lower_limits) - 1.0
-        dof_vel_scaled = robot_dof_vel * self._dof_vel_scale
+        # # normalize robot_dof_pos
+        # dof_pos_scaled = 2.0 * (robot_dof_pos - self.robot_dof_lower_limits) \
+        #     / (self.robot_dof_upper_limits - self.robot_dof_lower_limits) - 1.0   # normalized by [-1, 1]
+        # dof_pos_scaled = (robot_dof_pos - self.robot_dof_lower_limits) \
+        #                 /(self.robot_dof_upper_limits - self.robot_dof_lower_limits)    # normalized by [0, 1]
+        dof_pos_scaled = robot_dof_pos    # non-normalized
 
-        generalization_noise = torch.rand((dof_vel_scaled.shape[0], 6), device=self._device) + 0.5
+        # # normalize robot_dof_vel
+        # dof_vel_scaled = robot_dof_vel * self._dof_vel_scale
+        # generalization_noise = torch.rand((dof_vel_scaled.shape[0], 6), device=self._device) + 0.5
+        dof_vel_scaled = robot_dof_vel    # non-normalized
 
         '''
         pcds = target_obj_pcd.detach().cpu().numpy()
@@ -550,10 +507,10 @@ class PCDReachingTargetTask(RLTask):
         self.obs_buf = torch.cat((
                                   pointcloud.view([pointcloud.shape[0], -1]),   # [NE, N*3], point cloud
                                   dof_pos_scaled,                               # [NE, 6]
-                                  dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
+                                #   dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
+                                  dof_vel_scaled[:, :6],                        # [NE, 6]
                                   flange_pos,                                   # [NE, 3]
                                   flange_rot,                                   # [NE, 4]
-                                  target_pos,                                   # [NE, 3]
                                   goal_pos,                                     # [NE, 3]
                                  ), dim=1)
         # self.obs_buf[:, 0] = self.progress_buf / self._max_episode_length
@@ -605,20 +562,19 @@ class PCDReachingTargetTask(RLTask):
         # episode 끝나고 env ids를 받아서 reset
         indices = env_ids.to(dtype=torch.int32)
 
+
         # reset robot
-        # pos = torch.clamp(self.robot_default_dof_pos.unsqueeze(0) + 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs), device=self._device) - 0.5),
-        #                   self.robot_dof_lower_limits, self.robot_dof_upper_limits)
-        added_pos = 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs-4), device=self._device) - 0.5)
-        tool_pos = torch.zeros((len(env_ids), 4), device=self._device)
-        ### TODO: 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. pre_physics_step도 확인할 것
-        pos = torch.clamp(self.robot_default_dof_pos.unsqueeze(0) + torch.column_stack((added_pos, tool_pos)),
-                          self.robot_dof_lower_limits, self.robot_dof_upper_limits)
-        #########################
+        pos = self.robot_default_dof_pos.unsqueeze(0).repeat(len(env_ids), 1)   # non-randomized
+        # ##### randomize robot pose #####
+        # randomize_manipulator_pos = 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs-4), device=self._device) - 0.5)
+        # # tool_pos = torch.zeros((len(env_ids), 4), device=self._device)  # 여기에 rand를 추가
+        # ### TODO: 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. pre_physics_step도 확인할 것
+        # pos[:, 0:6] = pos[:, 0:6] + randomize_manipulator_pos
+        # ##### randomize robot pose #####
+        
+        # tool pose
         pos[:, 6] = torch.tensor(0.09, device=self._device)
         pos[:, 7] = torch.tensor(1.2, device=self._device)
-        #########################
-
-        
         
         dof_pos = torch.zeros((len(indices), self._robots.num_dof), device=self._device)
         dof_pos[:, :] = pos
@@ -630,39 +586,12 @@ class PCDReachingTargetTask(RLTask):
         self._robots.set_joint_position_targets(self.robot_dof_targets[env_ids], indices=indices)
         self._robots.set_joint_velocities(dof_vel, indices=indices)
 
-        # ##############################################################################################################
-        # self.robot_dof_targets[:, 6:] = torch.tensor(0, device=self._device, dtype=torch.float16)
-        # # self._robots.get_joint_positions()
-        # ##############################################################################################################
-
-        # reset lidar #####################
-        # self._lidar.add_depth_data_to_frame()
-        # self._lidar.add_point_cloud_data_to_frame()
-        # self._lidar.enable_visualization(high_lod=True,
-        #                                   draw_points=True,
-        #                                   draw_lines=False)
-        # self._lidar.initialize()
-
-        # reset target
-        position = torch.tensor([0.50, -0.2, 0.15], device=self._device)
-        target_pos = position.repeat(len(env_ids),1)
-        # target_pos = (torch.rand((len(env_ids), 3), device=self._device) - 0.5) * 2 \
-        #             * torch.tensor([0.25, 0.25, 0.10], device=self._device) \
-        #             + torch.tensor([0.50, 0.00, 0.20], device=self._device)
-
-        orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)
-        target_ori = orientation.repeat(len(env_ids),1)
-        self._targets.set_world_poses(target_pos + self._env_pos[env_ids],
-                                      target_ori,
-                                      indices=indices)
-        # self._targets.enable_rigid_body_physics()
-
         # reset goal
         # goal_pos_xy_variation = torch.rand((len(env_ids), 2), device=self._device) * 0.1
         # goal_pos_z_variation = torch.mul(torch.ones((len(env_ids), 1), device=self._device), 0.025)
         # goal_pos_variation = torch.cat((goal_pos_xy_variation, goal_pos_z_variation), dim=1)
         # goal_pos = torch.tensor(self._goal_position, device=self._device) + goal_pos_variation
-        goal_pos = torch.tensor(self._goal_position, device=self._device)
+        goal_pos = torch.tensor(self._goal_mark, device=self._device)
         self._goals.set_world_poses(goal_pos + self._env_pos[env_ids], indices=indices)
 
         # reset dummy
@@ -683,44 +612,25 @@ class PCDReachingTargetTask(RLTask):
         # self._targets.enable_rigid_body_physics()
         # self._targets.enable_gravities()
 
-
-
         # randomize all envs
         indices = torch.arange(self._num_envs, dtype=torch.int64, device=self._device)
         self.reset_idx(indices)
 
     def calculate_metrics(self) -> None:
-        # self.rew_buf[:] = -self._computed_tool_target_distance - self._computed_target_goal_distance
-        tool_target_distance_reward = 1 / (self.current_tool_target_distance + 1e-5)
-        target_goal_distance_reward = 1 / (self.current_target_goal_distance + 1e-5)
-
-        delta_tool_target = self.previous_tool_target_distance - self.current_tool_target_distance
-        delta_target_goal = self.previous_target_goal_distance - self.current_target_goal_distance
-
-        avoiding_non_touch = torch.abs(1 / (self.target_moving_distance + 0.5))
+        init_t_g_d = self.initial_tool_goal_distance
+        cur_t_g_d = self.current_tool_target_distance
+        tool_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d)
 
         self.completion_reward = torch.zeros(self._num_envs).to(self._device)
-        self.completion_reward[self.current_target_goal_distance<0.035] = 1
-        self.rew_buf[:] = self.alpha * tool_target_distance_reward + \
-                          self.beta * target_goal_distance_reward + \
-                          self.gamma * self.completion_reward + \
-                          self.zeta * delta_tool_target + \
-                          self.eta * delta_target_goal + \
-                          self.punishment * avoiding_non_touch        
-        
-        # 시간이 지나도 target이 움직이지 않으면 minus reward를 주어야 할 듯
+        self.completion_reward[self.current_tool_goal_distance<0.035] = 10
+        self.rew_buf[:] = tool_goal_distance_reward + self.completion_reward
 
-        '''
-        reward = alpha * (previous_distance_to_goal - current_distance_to_goal) +
-                 beta * (previous_distance_to_object - current_distance_to_object) +
-                 gamma * completion_reward
-        '''
 
     def is_done(self) -> None:
         self.reset_buf.fill_(0)
         # target reached
         # self.reset_buf = torch.where(self._computed_target_goal_distance <= 0.035, torch.ones_like(self.reset_buf), self.reset_buf)
-        self.reset_buf = torch.where(self.current_target_goal_distance <= 0.025, torch.ones_like(self.reset_buf), self.reset_buf)
+        self.reset_buf = torch.where(self.current_tool_goal_distance <= 0.025, torch.ones_like(self.reset_buf), self.reset_buf)
         # max episode length
         self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
 

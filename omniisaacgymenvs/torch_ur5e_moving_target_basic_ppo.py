@@ -48,7 +48,8 @@ cfg = PPO_DEFAULT_CONFIG.copy()
 cfg["rollouts"] = 16  # memory_size
 cfg["learning_epochs"] = 8
 cfg["mini_batches"] = 8  # 16 * 4096 / 8192
-cfg["discount_factor"] = 0.99
+# cfg["discount_factor"] = 0.99
+cfg["discount_factor"] = 0.9
 cfg["lambda"] = 0.95
 cfg["learning_rate"] = 5e-4
 cfg["learning_rate_scheduler"] = KLAdaptiveRL
@@ -76,12 +77,14 @@ cfg["value_preprocessor"] = RunningStandardScaler
 cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
 
 # logging to TensorBoard and write checkpoints (in timesteps)
-cfg["experiment"]["write_interval"] = 100
-cfg["experiment"]["checkpoint_interval"] = 500
+# cfg["experiment"]["write_interval"] = 100
+# cfg["experiment"]["checkpoint_interval"] = 500
+cfg["experiment"]["write_interval"] = 10
 
 now = datetime.now()
 formatted_date = now.strftime("%y%m%d_%H%M%S")
-cfg["experiment"]["experiment_name"] = f"wo_Norm_wo_Rand_{formatted_date}"
+# cfg["experiment"]["experiment_name"] = f"{formatted_date}_wo_Norm_wo_Rand_w_Preprocessor_Obj2Goal"
+cfg["experiment"]["experiment_name"] = f"dumy"
 
 cfg["experiment"]["directory"] = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/MovingTarget_Basic_Cylinder"
 # cfg["experiment"]["directory"] = "runs/torch/MovingTarget_Basic_wo_punishment"
@@ -90,15 +93,15 @@ agent = PPO(models=models,
             memory=memory,
             cfg=cfg,
             observation_space=env.observation_space,
-            action_space=env.action_space,
+            action_space=env.action_space,  
             device=device)
 
 # configure and instantiate the RL trainer
-cfg_trainer = {"timesteps": 15000, "headless": False}
+cfg_trainer = {"timesteps": 20000, "headless": False}
 trainer = SequentialTrainer(cfg=cfg_trainer, env=env, agents=agent)
 
-# start training
-trainer.train()
+# # start training
+# trainer.train()
 
 # # ---------------------------------------------------------
 # # comment the code above: `trainer.train()`, and...
@@ -106,10 +109,10 @@ trainer.train()
 # # ---------------------------------------------------------
 # from skrl.utils.huggingface import download_model_from_huggingface
 
-# # download the trained agent's checkpoint from Hugging Face Hub and load it
-# # path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-FrankaCabinet-PPO", filename="agent.pt")
-# path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/MovingTarget_Basic_Cylinder/wo_Norm_wo_Rand_240206_003124/checkpoints/best_agent.pt'
-# agent.load(path)
+# download the trained agent's checkpoint from Hugging Face Hub and load it
+# path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-FrankaCabinet-PPO", filename="agent.pt")
+path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/MovingTarget_Basic_Cylinder/240219_211045_wo_Norm_wo_Rand_w_Preprocessor_Obj2Goal/checkpoints/best_agent.pt'
+agent.load(path)
 
-# # start evaluation
-# trainer.eval()
+# start evaluation
+trainer.eval()

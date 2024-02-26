@@ -27,7 +27,6 @@ env = load_omniverse_isaacgym_env(task_name="PCDReachingTarget")
 # env.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(env.observation_space.shape[0],3), dtype=np.float32)
 env = wrap_env(env)
 
-
 device = env.device
 
 # instantiate a memory as rollout buffer (any memory can be used for this)
@@ -71,10 +70,10 @@ https://skrl.readthedocs.io/en/develop/intro/getting_started.html#preprocessors
 Preprocessor가 필요할 경우, 위의 `RunningStandardScaler`를 참고하여 pcd에 대한 preprocessor을 수행해봐도 될 것 같다.
 현재 observation space를 1차원으로 줄여서 아래 preprocessor를 사용해도 될듯? 방식은 한번 알아보자 
 '''
-# cfg["state_preprocessor"] = RunningStandardScaler
-# cfg["state_preprocessor_kwargs"] = {"size": env.observation_space, "device": device}
-# cfg["value_preprocessor"] = RunningStandardScaler
-# cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
+cfg["state_preprocessor"] = RunningStandardScaler
+cfg["state_preprocessor_kwargs"] = {"size": env.observation_space, "device": device}
+cfg["value_preprocessor"] = RunningStandardScaler
+cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
 
 # logging to TensorBoard and write checkpoints (in timesteps)
 cfg["experiment"]["write_interval"] = 120
@@ -82,7 +81,8 @@ cfg["experiment"]["checkpoint_interval"] = 1000
 
 now = datetime.now()
 formatted_date = now.strftime("%y%m%d_%H%M%S")
-cfg["experiment"]["experiment_name"] = f"{formatted_date}_wo_Norm_wo_Rand_wo_Preprocessor_ReLU"
+# cfg["experiment"]["experiment_name"] = f"{formatted_date}_wo_Norm_wo_Rand_wo_Preprocessor_ReLU"
+cfg["experiment"]["experiment_name"] = f"dumy"
 
 cfg["experiment"]["directory"] = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/MovingTarget_Basic_Cylinder"
 

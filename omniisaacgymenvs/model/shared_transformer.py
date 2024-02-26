@@ -21,20 +21,21 @@ class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
         # TODO: task embedding 추가하기. embed_dim을 맞추어야 함.
 
         # point cloud feature extractor
-        pcd_config = {
-                      "model": "pn",
-                      "dropout": 0.,
-                      "num_pcd_masks": 2,       # TODO: 외부 config에서 pcd mask 개수를 받아와야 함.
-                      "fps_deterministic": False,
-                      "pos_in_feature": False,
-                      "normalize_pos": True,
-                      "normalize_pos_param": None,
-                      "attention_num_heads": 8,
-                      "attention_hidden_dim": 64,
+        self.pcd_config = {
+                           "model": "pn",
+                           "dropout": 0.,
+                        #    "num_pcd_masks": 2,       # TODO: 외부 config에서 pcd mask 개수를 받아와야 함.
+                           "num_pcd_masks": 1,       # TODO: 외부 config에서 pcd mask 개수를 받아와야 함.
+                           "fps_deterministic": False,
+                           "pos_in_feature": False,
+                           "normalize_pos": True,
+                           "normalize_pos_param": None,
+                           "attention_num_heads": 8,
+                           "attention_hidden_dim": 64,
                       }
         
-        for i in range(pcd_config["num_pcd_masks"]):
-            setattr(self, f"pcd_backbone_{i}", init_network(pcd_config, input_channels=0, output_channels=[]))
+        for i in range(self.pcd_config["num_pcd_masks"]):
+            setattr(self, f"pcd_backbone_{i}", init_network(self.pcd_config, input_channels=0, output_channels=[]))
         # TODO: 나중에는 PointCloudExtractor를 사용하여 더 고도화된 feature extractor를 사용해야 함.
         # from omniisaacgymenvs.algos.feature_extractor import PointCloudExtractor
         
@@ -43,23 +44,24 @@ class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
 
         self.combine_pcd_robot_state = True
 
-        self.robot_state_layer = nn.Linear(25, transformer_input_dim) # TODO: robot state개수 25를 config에서 받아와야 함.
+        # self.robot_state_layer = nn.Linear(25, transformer_input_dim) # TODO: robot state개수 25를 config에서 받아와야 함.
+        self.robot_state_layer = nn.Linear(22, transformer_input_dim) # reaching target 하려고 임시로 넣어둔 것. 나중에는 이 부분을 지워야 함.
         self.transformer_enc = TransformerEnc(
                                               input_dim=transformer_input_dim,  # 이걸 pcd_config 넣어서 pcd랑 변수 맞추면 좋을 듯
                                               #   output_feature=transformer_output_dim,    # 아래의 mean_layer, value_layer의 input dim과 변수 맞추면 좋을 듯
                                               )
         
         self.attention_pooling = AttentionPooling(embed_dim=transformer_input_dim,
-                                                  num_heads=pcd_config['attention_num_heads'],
-                                                  latent_dim=pcd_config['attention_hidden_dim'])
+                                                  num_heads=self.pcd_config['attention_num_heads'],
+                                                  latent_dim=self.pcd_config['attention_hidden_dim'])
 
 
         self.linear_projection = nn.Linear(transformer_input_dim, projection_output_dim)
 
         self.att_linear_projection = nn.Sequential(
                                                    AttentionPooling(embed_dim=transformer_input_dim,
-                                                                    num_heads=pcd_config['attention_num_heads'],
-                                                                    latent_dim=pcd_config['attention_hidden_dim']),
+                                                                    num_heads=self.pcd_config['attention_num_heads'],
+                                                                    latent_dim=self.pcd_config['attention_hidden_dim']),
                                                    nn.ELU(),
                                                    nn.Linear(transformer_input_dim, projection_output_dim),
                                                    nn.ELU(),
@@ -84,11 +86,13 @@ class SharedTransformerEnc(GaussianMixin, DeterministicMixin, Model):
         LF: linear projection feature dimension,
         C: number of sub-masks(channels)
         '''
-        num_of_sub_mask = 2 # TODO: 외부 config에서 pcd mask 개수를 받아와야 함.
-        N = 90  # number of sampled points
+        num_of_sub_mask = self.pcd_config["num_pcd_masks"] # TODO: 외부 config에서 pcd mask 개수를 받아와야 함.
+        N = 100  # number of sampled points
         observations = inputs["states"] # [B, N*3 + RS], 3 for x, y, z
-        pcd_data = observations[:, :-25] # [B, N*3]
-        robot_state = observations[:, -25:] # [B, RS]
+        # pcd_data = observations[:, :-25] # [B, N*3]
+        # robot_state = observations[:, -25:] # [B, RS]
+        pcd_data = observations[:, :-22] # reaching target 하려고 임시로 넣어둔 것. 나중에는 이 부분을 지워야 함.
+        robot_state = observations[:, -22:] # reaching target 하려고 임시로 넣어둔 것. 나중에는 이 부분을 지워야 함.
         # TODO: Transformer에 넣어주기 위해서 robot state를 pcd feature 차원과 맞춰주어야 함. init에 linear layer를 넣어주어야 함.
         '''
         refer to observations in get_observations()

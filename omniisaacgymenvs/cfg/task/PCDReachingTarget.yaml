@@ -6,7 +6,7 @@ physics_engine: ${..physics_engine}
 # if given, will override the device setting in gym. 
 env:
   # numEnvs: ${resolve_default:4096,${...num_envs}}
-  numEnvs: ${resolve_default:1,${...num_envs}}
+  numEnvs: ${resolve_default:3,${...num_envs}}
   envSpacing: 3.0
   episodeLength: 300
   enableDebugVis: False
@@ -99,24 +99,6 @@ sim:
     stabilization_threshold: 0.001
     # per-body
     density: 100 # 이전 코드에는 -1이었음
-    max_depenetration_velocity: 1000.0
-    contact_offset: 0.005
-    rest_offset: 0.0
-  
-  target: # BSH
-    override_usd_defaults: False
-    make_kinematic: False # BSH
-    fixed_base: False # BSH
-    enable_self_collisions: True
-    enable_gyroscopic_forces: True
-    # also in stage params
-    # per-actor
-    solver_position_iteration_count: 12
-    solver_velocity_iteration_count: 1
-    sleep_threshold: 0.005
-    stabilization_threshold: 0.001
-    # per-body
-    density: 10
     max_depenetration_velocity: 1000.0
     contact_offset: 0.005
     rest_offset: 0.0

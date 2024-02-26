@@ -76,9 +76,10 @@ class PCDMovingTargetTask(RLTask):
         self.stage = omni.usd.get_context().get_stage()        
 
         self._pcd_sampling_num = self._task_cfg["sim"]["point_cloud_samples"]
+        self._num_pcd_masks = 2
         
         # observation and action space
-        pcd_observations = self._pcd_sampling_num * 2 * 3     # 2 is a number of point cloud masks and 3 is a cartesian coordinate
+        pcd_observations = self._pcd_sampling_num * self._num_pcd_masks * 3     # 2 is a number of point cloud masks and 3 is a cartesian coordinate
         self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 3 + 3
         '''
         refer to observations in get_observations()
@@ -460,7 +461,10 @@ class PCDMovingTargetTask(RLTask):
             pointcloud = self.pointcloud_listener.get_pointcloud_data()
             # TODO: pointcloud로부터 각 환경의 cube 위치를 가져와야 한다.
         except:
-            pointcloud = torch.rand((self._num_envs, 200, 3), device=self._device)
+            pointcloud = torch.rand((self._num_envs, self._pcd_sampling_num, 3), device=self._device)
+
+        if pointcloud.shape[0] == 0:
+            pointcloud = torch.rand((self._num_envs, self._pcd_sampling_num, 3), device=self._device)
 
         '''
         아래 순서로 최종 obs_buf에 concat. 첫 차원은 환경 갯수
@@ -481,7 +485,7 @@ class PCDMovingTargetTask(RLTask):
         goal_pos, goal_rot = self._goals.get_local_poses()
 
         # get target position from point cloud
-        target_obj_pcd = pointcloud[:, -90:, :]
+        target_obj_pcd = pointcloud[:, -100:, :]
         target_pos = torch.mean(target_obj_pcd, dim=1)
 
         if self.previous_target_position == None:
