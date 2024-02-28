@@ -71,7 +71,20 @@ class PCDReachingTargetTask(RLTask):
         self.eta = 0.25
         self.relu = torch.nn.ReLU()
 
-        self.stage = omni.usd.get_context().get_stage()        
+        self.stage = omni.usd.get_context().get_stage()
+        
+        # tool orientation
+        self.tool_rot_x = 1.221 # 70 degree
+        self.tool_rot_z = 0     # 0 degree
+        self.tool_rot_y = -1.5707 # -90 degree
+
+        # workspace 2D boundary
+        self.x_min = 0.3
+        self.x_max = 1.2
+        self.y_min = -0.7
+        self.y_max = 0.7
+        self.z_min = 0.1
+        self.z_max = 0.8
 
         self._pcd_sampling_num = self._task_cfg["sim"]["point_cloud_samples"]
         self._num_pcd_masks = 1
@@ -95,7 +108,7 @@ class PCDReachingTargetTask(RLTask):
         if self._control_space == "joint":
             self._num_actions = 6
         elif self._control_space == "cartesian":
-            self._num_actions = 3
+            self._num_actions = 7   # 3 for position, 4 for rotation(quaternion)
         else:
             raise ValueError("Invalid control space: {}".format(self._control_space))
 
@@ -148,6 +161,7 @@ class PCDReachingTargetTask(RLTask):
         self._flanges = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/{self._flange_link}", name="end_effector_view")
         # goal view
         self._goals = RigidPrimView(prim_paths_expr="/World/envs/.*/goal", name="goal_view", reset_xform_properties=False)
+        self._goals._non_root_link = True   # do not set states for kinematics
 
         scene.add(self._robots)
         scene.add(self._flanges)
@@ -211,8 +225,9 @@ class PCDReachingTargetTask(RLTask):
                                                                  # clipping_range=(0.5, 3.86),
                                                                  clipping_range=(0.5, 3),
                                                                  # TODO: clipping range 조절해서 환경이 서로 안 겹치게 하자.
-                                                                 parent=self.stage.GetPrimAtPath(f"/World/envs/env_{i}"),
-                                                                 name=f"camera_{j}"
+                                                                #  parent=self.stage.GetPrimAtPath(f"/World/envs/env_{i}"),
+                                                                #  parent=f"/World/envs/env_{i}",
+                                                                #  name=f"camera_{j}"
                                                                  )
                 
                 render_product = self.rep.create.render_product(locals()[f"camera_{j}"], resolution=(self.camera_width, self.camera_height))
@@ -417,14 +432,15 @@ class PCDReachingTargetTask(RLTask):
     def get_observations(self) -> dict:
         ''' retrieve point cloud data from all render products '''
         # tasks/utils/pcd_writer.py 에서 pcd sample하고 tensor로 변환해서 가져옴
-        try:
-            pointcloud = self.pointcloud_listener.get_pointcloud_data()
-            # TODO: pointcloud로부터 각 환경의 cube 위치를 가져와야 한다.
-        except:
-            pointcloud = torch.rand((self._num_envs, self._pcd_sampling_num, 3), device=self._device)
+        pointcloud = self.pointcloud_listener.get_pointcloud_data()
+        # try:
+        #     pointcloud = self.pointcloud_listener.get_pointcloud_data()
+        #     # TODO: pointcloud로부터 각 환경의 cube 위치를 가져와야 한다.
+        # except:
+        #     pointcloud = torch.rand((self._num_envs, self._pcd_sampling_num, 3), device=self._device)
 
-        if pointcloud.shape[0] == 0:
-            pointcloud = torch.rand((self._num_envs, self._pcd_sampling_num, 3), device=self._device)
+        # if pointcloud.shape[0] == 0:
+        #     pointcloud = torch.rand((self._num_envs, self._pcd_sampling_num, 3), device=self._device)
 
         '''
         아래 순서로 최종 obs_buf에 concat. 첫 차원은 환경 갯수
@@ -443,6 +459,8 @@ class PCDReachingTargetTask(RLTask):
         flange_pos, flange_rot = self._flanges.get_local_poses()
         # target_pos, target_rot = self._targets.get_local_poses()    # TODO: 물체의 pose는 명시적인 것이 아닌, pcd를 이용하도록 하자.
         goal_pos, goal_rot = self._goals.get_local_poses()
+        
+        self.flange_pos = copy.deepcopy(flange_pos)
         self.goal_pos = copy.deepcopy(goal_pos)
 
         # get tool position from point cloud
@@ -536,20 +554,23 @@ class PCDReachingTargetTask(RLTask):
             targets = self.robot_dof_targets[:, :6] + self.robot_dof_speed_scales[:6] * self.dt * self.actions * self._action_scale
 
         elif self._control_space == "cartesian":
-            goal_position = self.flange_pos + actions / 100.0
+            # goal_position = self.flange_pos + actions / 100.0
+            goal_position = self.flange_pos + self.actions[:, :3] / 10.0
+            goal_orientation = self.flange_rot + self.actions[:, 3:] / 70.0
+
             delta_dof_pos = omniverse_isaacgym_utils.ik(
                                                         jacobian_end_effector=self.jacobians[:, self._robots.body_names.index(self._flange_link)-1, :, :],
                                                         current_position=self.flange_pos,
                                                         current_orientation=self.flange_rot,
                                                         goal_position=goal_position,
-                                                        goal_orientation=None
+                                                        goal_orientation=goal_orientation
                                                         )
             targets = self.robot_dof_targets[:, :6] + delta_dof_pos[:, :6]
 
         self.robot_dof_targets[:, :6] = torch.clamp(targets, self.robot_dof_lower_limits[:6], self.robot_dof_upper_limits[:6])
-        self.robot_dof_targets[:, 6:] = torch.tensor(0, device=self._device, dtype=torch.float16)
-        self.robot_dof_targets[:, 6] = torch.tensor(0.09, device=self._device)
-        self.robot_dof_targets[:, 7] = torch.tensor(1.2, device=self._device)
+        self.robot_dof_targets[:, 7] = torch.tensor(self.tool_rot_x, device=self._device)
+        self.robot_dof_targets[:, 8] = torch.tensor(self.tool_rot_z, device=self._device)
+        self.robot_dof_targets[:, 9] = torch.tensor(self.tool_rot_y, device=self._device)
         ### 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. reset_idx도 확인할 것
         # self._robots.get_joint_positions()
         # self._robots.set_joint_positions(self.robot_dof_targets, indices=env_ids_int32)
@@ -572,10 +593,6 @@ class PCDReachingTargetTask(RLTask):
         # pos[:, 0:6] = pos[:, 0:6] + randomize_manipulator_pos
         # ##### randomize robot pose #####
         
-        # tool pose
-        pos[:, 6] = torch.tensor(0.09, device=self._device)
-        pos[:, 7] = torch.tensor(1.2, device=self._device)
-        
         dof_pos = torch.zeros((len(indices), self._robots.num_dof), device=self._device)
         dof_pos[:, :] = pos
         dof_vel = torch.zeros((len(indices), self._robots.num_dof), device=self._device)
@@ -592,6 +609,7 @@ class PCDReachingTargetTask(RLTask):
         # goal_pos_variation = torch.cat((goal_pos_xy_variation, goal_pos_z_variation), dim=1)
         # goal_pos = torch.tensor(self._goal_position, device=self._device) + goal_pos_variation
         goal_pos = torch.tensor(self._goal_mark, device=self._device)
+        goal_pos = goal_pos.repeat(len(env_ids), 1)
         self._goals.set_world_poses(goal_pos + self._env_pos[env_ids], indices=indices)
 
         # reset dummy
@@ -627,10 +645,21 @@ class PCDReachingTargetTask(RLTask):
 
 
     def is_done(self) -> None:
-        self.reset_buf.fill_(0)
+        ones = torch.ones_like(self.reset_buf)
+        reset = torch.zeros_like(self.reset_buf)
+
+        # # workspace regularization
+        reset = torch.where(self.flange_pos[:, 0] < self.x_min, ones, reset)
+        reset = torch.where(self.flange_pos[:, 1] < self.y_min, ones, reset)
+        reset = torch.where(self.flange_pos[:, 0] > self.x_max, ones, reset)
+        reset = torch.where(self.flange_pos[:, 1] > self.y_max, ones, reset)
+        reset = torch.where(self.flange_pos[:, 2] < self.z_min, ones, reset)
+        reset = torch.where(self.flange_pos[:, 2] > self.z_max, ones, reset)
+
+
         # target reached
-        # self.reset_buf = torch.where(self._computed_target_goal_distance <= 0.035, torch.ones_like(self.reset_buf), self.reset_buf)
         self.reset_buf = torch.where(self.current_tool_goal_distance <= 0.025, torch.ones_like(self.reset_buf), self.reset_buf)
+        
         # max episode length
         self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
 
