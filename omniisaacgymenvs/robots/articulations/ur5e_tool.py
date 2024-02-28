@@ -13,16 +13,6 @@ import math
 import numpy as np
 import torch
 
-# from pathlib import Path
-# current_dir = os.path.dirname(os.path.realpath(__file__))
-# directory = Path(current_dir).parent.parent.parent.parent
-# directory = os.path.join(str(directory), 'exts')
-
-# sys.path.append(directory)
-
-# from omni.isaac.core.utils.extensions import enable_extension
-# enable_extension("omni.isaac.sensor")
-
 from omni.isaac.core.robots.robot import Robot
 from omni.isaac.core.utils.nucleus import get_assets_root_path
 from omni.isaac.core.utils.stage import add_reference_to_stage
@@ -99,28 +89,6 @@ class UR5eTool(Robot):
         max_velocity = [math.degrees(x) for x in [2.175, 2.175, 2.175, 2.61, 2.61, 2.61,
                                                 #   2.61, 2.61, 2.61, 2.61]]
                                                   0, 0, 0, 0]]
-
-
-        # dof_paths = [
-        #     "base_link/shoulder_pan_joint",
-        #     "shoulder_link/shoulder_lift_joint",
-        #     "upper_arm_link/elbow_joint",
-        #     "forearm_link/wrist_1_joint",
-        #     "wrist_1_link/wrist_2_joint",
-        #     "wrist_2_link/wrist_3_joint",
-        # ]
-
-
-        # # 여기서 default pos를 random으로 바꿔주서 tool 부분이 임의의 pose를 갖도록?
-        # drive_type = ["angular"] * 6
-        # default_dof_pos = [math.degrees(x) for x in [0.0, -1.75, 1.05, -1.57, -1.57, 1.57,]]
-        # stiffness = [400*np.pi/180] * 6
-        # damping = [80*np.pi/180] * 6
-        # max_force = [87, 87, 87, 12, 12, 12]
-        # max_velocity = [math.degrees(x) for x in [2.175, 2.175, 2.175, 2.61, 2.61, 2.61]]
-
-
-
 
         for i, dof in enumerate(dof_paths):
             if i > 6: continue
