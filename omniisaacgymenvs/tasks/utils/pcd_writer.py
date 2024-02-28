@@ -157,6 +157,10 @@ class PointcloudWriter(Writer):
                 pcd_normal = pcd_normal.unsqueeze(0)
                 pcd_semantic = pcd_semantic.unsqueeze(0)
 
+                # 카메라가 총 3대가 있고, idx가 0부터 시작하므로 3개의 if문을 사용
+                # 한 env내 3개의 카메라 중 첫 카메라(idx%3)는 바로 each_env_pcd를 얻는다.
+                # 두 번째(else)는 each_env_pcd에 concat한다.
+                # 세 번째 ((idx+1)%3)는 
                 if idx%3 == 0:
                     # raw point cloud pose values are calculated with respect to the origin of the entire environment
                     # so, you need to subtract the origin of each environment
@@ -168,6 +172,7 @@ class PointcloudWriter(Writer):
                     each_env_pcd_pos = pcd_pos
                     each_env_pcd_semantic = pcd_semantic
                 elif (idx+1)%3 == 0:
+                    # TODO: each_env_pcd_pos에 pcd_pos를 concat먼저 하고 아래 절차를 해야하지 않나???
                     # sampling pcd at each semantic then concat pcd of each env
                     sampled_pcd_pos = self._normalize_sampling_pcd(
                                                                    idx,
