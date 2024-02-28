@@ -137,18 +137,21 @@ class PointcloudWriter(Writer):
         # TODO: for문 말고 matrix화 시킬 수 있다면 한번 시도를....
         num_samples = self.pcd_sampling_num
 
+        previous_env_index = 0
         for annotator in data.keys():
             if annotator.startswith("pointcloud"):
                 if len(annotator.split('_'))==2:
                     # idx = f'env_{0}'
-                    idx = 0 # env_0
+                    idx = 0
                 elif len(annotator.split('_'))==3:
                     # idx = f'env_{int(annotator.split("_")[-1])}'
                     idx = int(annotator.split("_")[-1]) # env_n
 
-                if self.visualize_point_cloud:
-                    self._visualize_pointcloud(idx, self.env_pos, data[annotator])
-                    
+                env_index = idx//3
+                env_center = self.env_pos[env_index].to(self.device)
+                
+                camera_idx = idx%3
+
                 pcd_pos = torch.from_numpy(data[annotator]['data']).to(self.device)
                 pcd_normal = torch.from_numpy(data[annotator]['info']['pointNormals']).to(self.device)
                 pcd_semantic = torch.from_numpy(data[annotator]['info']['pointSemantic']).to(self.device)
@@ -157,48 +160,100 @@ class PointcloudWriter(Writer):
                 pcd_normal = pcd_normal.unsqueeze(0)
                 pcd_semantic = pcd_semantic.unsqueeze(0)
 
-                # 카메라가 총 3대가 있고, idx가 0부터 시작하므로 3개의 if문을 사용
-                # 한 env내 3개의 카메라 중 첫 카메라(idx%3)는 바로 each_env_pcd를 얻는다.
-                # 두 번째(else)는 each_env_pcd에 concat한다.
-                # 세 번째 ((idx+1)%3)는 
-                if idx%3 == 0:
-                    # raw point cloud pose values are calculated with respect to the origin of the entire environment
-                    # so, you need to subtract the origin of each environment
-                    env_index = idx//3
-                    env_center = self.env_pos[env_index].to(self.device)
-                    pcd_pos = torch.sub(pcd_pos, env_center)               
-
-                    # save pcd_pos and pcd_semantic for the first on each env pcd pos
+                if pcd_pos.shape[1]==0:
+                    pass
+                elif camera_idx == 0:
                     each_env_pcd_pos = pcd_pos
+                    each_env_pcd_normal = pcd_normal
                     each_env_pcd_semantic = pcd_semantic
-                elif (idx+1)%3 == 0:
-                    # TODO: each_env_pcd_pos에 pcd_pos를 concat먼저 하고 아래 절차를 해야하지 않나???
-                    # sampling pcd at each semantic then concat pcd of each env
-                    sampled_pcd_pos = self._normalize_sampling_pcd(
-                                                                   idx,
-                                                                   each_env_pcd_pos.squeeze(0),
-                                                                   each_env_pcd_semantic.squeeze(0),
-                                                                   num_samples,
-                                                                   self.pcd_normalize,
-                                                                   )
+                else:
+                    each_env_pcd_pos = torch.cat((each_env_pcd_pos, pcd_pos), dim=1)
+                    each_env_pcd_normal = torch.cat((each_env_pcd_normal, pcd_normal), dim=1)
+                    each_env_pcd_semantic = torch.cat((each_env_pcd_semantic, pcd_semantic), dim=1)
+
+                if camera_idx == 2:
+                    centerized_pcd_pos = torch.sub(each_env_pcd_pos, env_center)               
+
+                    sampled_pcd_pos = self._sampling_pcd(
+                                                         idx,
+                                                         centerized_pcd_pos.squeeze(0),
+                                                         each_env_pcd_semantic.squeeze(0),
+                                                         num_samples,
+                                                         self.pcd_normalize,
+                                                         )
                     sampled_pcd_pos = sampled_pcd_pos.unsqueeze(0)
-                    if idx == 2:
+                    if env_index == 0:
                         pcd_pos_tensors = sampled_pcd_pos
-                        # you don't need to concat pcd_semantic because you already sampled pcd by semantic
                     else:
                         pcd_pos_tensors = torch.cat((pcd_pos_tensors, sampled_pcd_pos), dim=0)
-                        # you don't need to concat pcd_semantic because you already sampled pcd by semantic
-                else:
-                    # substract env center from pcd_pos
-                    pcd_pos = torch.sub(pcd_pos, env_center)      
+                    # you don't need to concat pcd_semantic because you already sampled pcd by semantic
 
-                    # concat pcd that is in same the env
-                    each_env_pcd_pos = torch.cat((each_env_pcd_pos, pcd_pos), dim=1)
-                    each_env_pcd_semantic = torch.cat((each_env_pcd_semantic, pcd_semantic), dim=1)
+
+            # if annotator.startswith("pointcloud"):
+            #     if len(annotator.split('_'))==2:
+            #         # idx = f'env_{0}'
+            #         idx = 0 # env_0
+            #     elif len(annotator.split('_'))==3:
+            #         # idx = f'env_{int(annotator.split("_")[-1])}'
+            #         idx = int(annotator.split("_")[-1]) # env_n
+
+            #     if self.visualize_point_cloud:
+            #         self._visualize_pointcloud(idx, self.env_pos, data[annotator])
+                    
+            #     pcd_pos = torch.from_numpy(data[annotator]['data']).to(self.device)
+            #     pcd_normal = torch.from_numpy(data[annotator]['info']['pointNormals']).to(self.device)
+            #     pcd_semantic = torch.from_numpy(data[annotator]['info']['pointSemantic']).to(self.device)
+
+            #     pcd_pos = pcd_pos.unsqueeze(0)
+            #     pcd_normal = pcd_normal.unsqueeze(0)
+            #     pcd_semantic = pcd_semantic.unsqueeze(0)
+
+            #     # 카메라가 총 3대가 있고, idx가 0부터 시작하므로 3개의 if문을 사용
+            #     # 한 env내 3개의 카메라 중 첫 카메라(idx%3)는 바로 each_env_pcd를 얻는다.
+            #     # 두 번째(else)는 두 번째 카메라에서 얻은 pcd를 each_env_pcd에 concat한다.
+            #     # 세 번째 ((idx+1)%3)는 세 번째 카메라에서 얻은 pcd를 each_env_pcd에 concat하고 전체 pcd의 개수가 동일하도록 sampling한다.
+            #     if idx%3 == 0:
+            #         # raw point cloud pose values are calculated with respect to the origin of the entire environment
+            #         # so, you need to subtract the origin of each environment
+            #         env_index = idx//3
+            #         env_center = self.env_pos[env_index].to(self.device)
+            #         pcd_pos_cam1 = torch.sub(pcd_pos, env_center)               
+
+            #         # save pcd_pos and pcd_semantic for the first on each env pcd pos
+            #         each_env_pcd_pos = pcd_pos_cam1
+            #         each_env_pcd_semantic = pcd_semantic
+            #     elif (idx+1)%3 == 0:
+            #         # TODO: each_env_pcd_pos에 pcd_pos를 concat먼저 하고 아래 절차를 해야하지 않나???
+            #         pcd_pos_cam3 = torch.sub(pcd_pos, env_center)
+            #         each_env_pcd_pos = torch.cat((each_env_pcd_pos, pcd_pos_cam3), dim=1)
+            #         each_env_pcd_semantic = torch.cat((each_env_pcd_semantic, pcd_semantic), dim=1)
+
+            #         # sampling pcd at each semantic then concat pcd of each env
+            #         sampled_pcd_pos = self._sampling_pcd(
+            #                                              idx,
+            #                                              each_env_pcd_pos.squeeze(0),
+            #                                              each_env_pcd_semantic.squeeze(0),
+            #                                              num_samples,
+            #                                              self.pcd_normalize,
+            #                                              )
+            #         sampled_pcd_pos = sampled_pcd_pos.unsqueeze(0)
+            #         if idx == 2:
+            #             pcd_pos_tensors = sampled_pcd_pos
+            #             # you don't need to concat pcd_semantic because you already sampled pcd by semantic
+            #         else:
+            #             pcd_pos_tensors = torch.cat((pcd_pos_tensors, sampled_pcd_pos), dim=0)
+            #             # you don't need to concat pcd_semantic because you already sampled pcd by semantic
+            #     else:
+            #         # substract env center from pcd_pos
+            #         pcd_pos_cam2 = torch.sub(pcd_pos, env_center)      
+
+            #         # concat pcd that is in same the env
+            #         each_env_pcd_pos = torch.cat((each_env_pcd_pos, pcd_pos_cam2), dim=1)
+            #         each_env_pcd_semantic = torch.cat((each_env_pcd_semantic, pcd_semantic), dim=1)
 
         return pcd_pos_tensors
 
-    def _normalize_sampling_pcd(self,        # also conduct sampling
+    def _sampling_pcd(self,        # also conduct sampling
                                 idx: int,
                                 pcd_pos,
                                 pcd_semantic,
