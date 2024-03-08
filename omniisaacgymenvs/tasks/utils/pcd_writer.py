@@ -177,7 +177,7 @@ class PointcloudWriter(Writer):
                         each_env_pcd_semantic = pcd_semantic
 
                 if camera_idx == 2:
-                    centerized_pcd_pos = torch.sub(each_env_pcd_pos, env_center)               
+                    centerized_pcd_pos = torch.sub(each_env_pcd_pos, env_center)
 
                     sampled_pcd_pos = self._sampling_pcd(
                                                          idx,
@@ -191,6 +191,19 @@ class PointcloudWriter(Writer):
                         pcd_pos_tensors = sampled_pcd_pos
                     else:
                         pcd_pos_tensors = torch.cat((pcd_pos_tensors, sampled_pcd_pos), dim=0)
+
+                    '''
+                    pcd_np = sampled_pcd_pos.squeeze(0).detach().cpu().numpy()
+                    
+                    
+                    print(f'pcd shape: {pcd_np.shape}')
+                    point_cloud = o3d.geometry.PointCloud()
+                    point_cloud.points = o3d.utility.Vector3dVector(pcd_np)
+                    o3d.visualization.draw_geometries([point_cloud],
+                                                        window_name=f'point cloud semantic {idx}')
+                    '''
+                    
+
 
         return pcd_pos_tensors
 
