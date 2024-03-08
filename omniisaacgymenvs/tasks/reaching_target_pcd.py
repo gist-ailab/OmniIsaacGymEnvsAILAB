@@ -17,7 +17,7 @@ from omni.isaac.core.utils.semantics import add_update_semantics
 
 import omni
 from omni.isaac.core.prims import RigidPrimView
-from omni.isaac.core.objects import DynamicCylinder, DynamicSphere, DynamicCuboid
+from omni.isaac.core.objects import DynamicCylinder, DynamicSphere
 # from omni.isaac.core.materials import PhysicsMaterial
 # from omni.isaac.core.utils.string import find_unique_string_name
 from omni.isaac.core.utils.prims import get_prim_at_path, is_prim_path_valid
@@ -80,11 +80,11 @@ class PCDReachingTargetTask(RLTask):
 
         # workspace 2D boundary
         self.x_min = 0.3
-        self.x_max = 1.2
-        self.y_min = -0.7
-        self.y_max = 0.7
+        self.x_max = 0.9
+        self.y_min = -0.6
+        self.y_max = 0.6
         self.z_min = 0.1
-        self.z_max = 0.8
+        self.z_max = 0.6
 
         self._pcd_sampling_num = self._task_cfg["sim"]["point_cloud_samples"]
         self._num_pcd_masks = 1
@@ -92,7 +92,8 @@ class PCDReachingTargetTask(RLTask):
         # observation and action space
         # pcd_observations = self._pcd_sampling_num * 2 * 3     # 2 is a number of point cloud masks and 3 is a cartesian coordinate
         pcd_observations = self._pcd_sampling_num * self._num_pcd_masks * 3     # 1 is a number of point cloud masks and 3 is a cartesian coordinate
-        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 3
+        # self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 3
+        self._num_observations = 3 + 6 + 6 + 3 + 4 + 3  # tool position, robot dof pos, robot dof vel, flange pos, flange rot, goal pos
         '''
         refer to observations in get_observations()
         dof_pos_scaled,                               # [NE, 6]
@@ -171,45 +172,20 @@ class PCDReachingTargetTask(RLTask):
         
         # point cloud view
         self.render_products = []
-        camera_positions = {0: [2, 1.5, 0.5],
+        # camera_positions = {0: [2, 1.5, 0.5],
+        camera_positions = {0: [1.5, 1.5, 0.5],
                             1: [2, -1.3, 0.5],
-                            2: [-1.5, -2.2, 0.5]}
-        camera_rotations = {0: [0, -10, 60],
+                            2: [-0.5, -1.2, 0.5]}
+                            # 2: [-1.5, -2.2, 0.5]}
+                            # 2: [-4.8, -6.1, 0.5]}
+        camera_rotations = {0: [0, -10, 50],
                             1: [0, -10, -45],
                             2: [0, -10, -130]}
         env_pos = self._env_pos.cpu()
 
         # Used to get depth data from the camera
         for i in range(self._num_envs):
-            self.rep.get.camera()   # TODO: 여기에 prim path를 넣어야 할 수도 있다.
-            # Get the parameters of the camera via links below
-            # https://learn.microsoft.com/en-us/answers/questions/201906/pixel-size-of-rgb-and-tof-camera#:~:text=Pixel%20Size%20for,is%20~2.3%20mm
-            # https://docs.omniverse.nvidia.com/isaacsim/latest/features/sensors_simulation/isaac_sim_sensors_camera.html#calibrated-camera-sensors
-            '''
-            Azure Kinect DK
-            [Depth Camera]
-            focal_length = 0.18 (cm)
-            focus_distance = 3.86 (m) 그런데 clipping range가 있는데 이게 어떻게 작용할지 불확실함
-            horizontal_aperture = 0.224 (cm)
-            vertical_aperture = 0.2016 (cm)
-            clipping_range = 0.5 ~ 3.86 (m)
-            위 값을 RGB로 가시화 하면 이상하긴 한데, depth camera 니까 우선 해보자.
-            
-            여기 보면 또 mm임..
-            https://docs.omniverse.nvidia.com/isaacsim/latest/manual_replicator_composer_parameter_list.html#camera-lens
-            
-
-            [RGB Camera]
-            focal_length = 0.23 (cm)
-            focus_distance = 5 (m) 그런데 clipping range가 있는데 이게 어떻게 작용할지 불확실함
-            horizontal_aperture = 0.24 (cm)
-            vertical_aperture = 0.135 (cm)
-            clipping_range = 0.01 ~ 10 (m)
-            '''
-            # pos: (2 -1.3 0.5), ori: (0, -10, -45)
-            # pos: (-1.5 -2.2 0.5), ori: (0, -10, -130)
-            # 
-
+            # self.rep.get.camera()   # 이건 USD에 있는 camera를 가져오는 것이고, 아래는 새로운 camera를 만드는 것
             for j in range(3):
                 locals()[f"camera_{j}"] = self.rep.create.camera(
                                                                  position = (env_pos[i][0] + camera_positions[j][0],
@@ -218,12 +194,12 @@ class PCDReachingTargetTask(RLTask):
                                                                  rotation=(camera_rotations[j][0],
                                                                            camera_rotations[j][1],
                                                                            camera_rotations[j][2]), 
-                                                                 focal_length=1.8,
-                                                                 focus_distance=3.86,
-                                                                 horizontal_aperture=2.24,
+                                                                 focal_length=18.0,
+                                                                 focus_distance=400,
+                                                                 horizontal_aperture=20.955,
                                                                  # vertical_aperture=0.2016,
                                                                  # clipping_range=(0.5, 3.86),
-                                                                 clipping_range=(0.5, 3),
+                                                                 clipping_range=(0.01, 3),
                                                                  # TODO: clipping range 조절해서 환경이 서로 안 겹치게 하자.
                                                                 #  parent=self.stage.GetPrimAtPath(f"/World/envs/env_{i}"),
                                                                 #  parent=f"/World/envs/env_{i}",
@@ -232,21 +208,6 @@ class PCDReachingTargetTask(RLTask):
                 
                 render_product = self.rep.create.render_product(locals()[f"camera_{j}"], resolution=(self.camera_width, self.camera_height))
                 self.render_products.append(render_product)
-
-            # camera = self.rep.create.camera(
-            #     # position=(0.5 + env_pos[i][0], 1.5 + env_pos[i][1], 0.4),
-            #     position=(2 + env_pos[i][0], 1.5 + env_pos[i][1], 0.5),
-            #     rotation=(0, -10, 60),
-
-            #     focal_length=1.8,
-            #     focus_distance=3.86,
-            #     horizontal_aperture=2.24,
-            #     # vertical_aperture=0.2016,
-            #     clipping_range=(0.5, 3.86),                
-            #     )
-            # render_product = self.rep.create.render_product(camera, resolution=(self.camera_width, self.camera_height))
-
-            # self.render_products.append(render_product)
 
         # start replicator to capture image data
         self.rep.orchestrator._orchestrator._is_started = True
@@ -323,12 +284,13 @@ class PCDReachingTargetTask(RLTask):
     def get_goal(self):
         goal = DynamicSphere(prim_path=self.default_zero_env_path + "/goal",
                              name="goal",
-                             radius=0.025,
+                             radius=0.015,
                              color=torch.tensor([0, 255, 0]))
         # goal.disable_rigid_body_physics()
         self._sim_config.apply_articulation_settings("goal",
                                                      get_prim_at_path(goal.prim_path),
                                                      self._sim_config.parse_actor_config("goal"))
+        goal.set_collision_enabled(False)
         
 
     def init_data(self) -> None:
@@ -432,15 +394,30 @@ class PCDReachingTargetTask(RLTask):
     def get_observations(self) -> dict:
         ''' retrieve point cloud data from all render products '''
         # tasks/utils/pcd_writer.py 에서 pcd sample하고 tensor로 변환해서 가져옴
-        pointcloud = self.pointcloud_listener.get_pointcloud_data()
-        # try:
-        #     pointcloud = self.pointcloud_listener.get_pointcloud_data()
-        #     # TODO: pointcloud로부터 각 환경의 cube 위치를 가져와야 한다.
-        # except:
-        #     pointcloud = torch.rand((self._num_envs, self._pcd_sampling_num, 3), device=self._device)
+        
+        progress_count = self.progress_buf
+        reset_mask = (progress_count == 1).squeeze()
+        newly_started_env_idx = torch.flatten(torch.nonzero(reset_mask))
 
-        # if pointcloud.shape[0] == 0:
-        #     pointcloud = torch.rand((self._num_envs, self._pcd_sampling_num, 3), device=self._device)
+
+
+
+        pointcloud = self.pointcloud_listener.get_pointcloud_data()
+        # index에 해당하는 거만 가져와도 속도가 빨라질까????
+
+        
+        '''
+        아래는 나중에 도구의 pose도 변할 때 사용.
+        progress_buf를 확인하여 1로 되어있는 idx를 찾는다.
+        해당 idx를 갖는 env의 pointcloud를 가져온다.
+        그걸 평균내어 앞에서 찾는 tool_pos의 idx에 넣어준다
+        '''
+        # TODO: chatGPT에 있는 글 참조해서 나중에 작업하기
+
+
+        # get tool position from point cloud
+        self.tool_pos = torch.mean(pointcloud, dim=1)
+        tool_pos = self.tool_pos
 
         '''
         아래 순서로 최종 obs_buf에 concat. 첫 차원은 환경 갯수
@@ -461,12 +438,10 @@ class PCDReachingTargetTask(RLTask):
         goal_pos, goal_rot = self._goals.get_local_poses()
         
         self.flange_pos = copy.deepcopy(flange_pos)
+        self.flange_rot = copy.deepcopy(flange_rot)
         self.goal_pos = copy.deepcopy(goal_pos)
 
-        # get tool position from point cloud
-        self.tool_pos = torch.mean(pointcloud, dim=1)
-
-        if self.previous_tool_position is None:
+        if self.previous_tool_goal_distance is None:
             self.initial_tool_goal_distance = LA.norm(self.goal_pos - self.tool_pos, ord=2, dim=1)
             self.current_tool_goal_distance = LA.norm(self.goal_pos - self.tool_pos, ord=2, dim=1)
             self.previous_tool_goal_distance = self.current_tool_goal_distance
@@ -490,32 +465,33 @@ class PCDReachingTargetTask(RLTask):
         # dof_vel_scaled = robot_dof_vel * self._dof_vel_scale
         # generalization_noise = torch.rand((dof_vel_scaled.shape[0], 6), device=self._device) + 0.5
         dof_vel_scaled = robot_dof_vel    # non-normalized
+        
 
         '''
-        pcds = target_obj_pcd.detach().cpu().numpy()
-
-
-        for i in range(pcds.shape[0]):
+        flange_pos, flange_rot = self._flanges.get_local_poses()
+        self.tool_pos = torch.mean(pointcloud, dim=1)
+        pointcloud = self.pointcloud_listener.get_pointcloud_data()
+        pcd_np = pointcloud.squeeze(0).detach().cpu().numpy()
         
-            pcd = pcds[i]    # visualize only first env
-            
-            
-            print(f'pcd shape: {pcd.shape}')
-            point_cloud = o3d.geometry.PointCloud()
-            point_cloud.points = o3d.utility.Vector3dVector(pcd)
-            o3d.visualization.draw_geometries([point_cloud],
-                                                window_name=f'point cloud semantic')
+        print(f'pcd shape: {pcd_np.shape}')
+        base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.2, origin=np.array([0.0, 0.0, 0.0]))
 
+        T_t = np.eye(4)
+        # tool_pos = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.2, origin=self.tool_pos[0].detach().cpu().numpy())
+        tool_pos = o3d.geometry.TriangleMesh().create_sphere(radius=0.01)
+        T_t[:3, 3] = self.tool_pos[0].detach().cpu().numpy()
+        tool_position = copy.deepcopy(tool_pos).transform(T_t)
 
-        
+        flange_ori_np = flange_rot[0].cpu().numpy() # 0 is view index
+        T_ee = np.eye(4)
+        R_ee = base_coord.get_rotation_matrix_from_quaternion(flange_ori_np)
+        T_ee[:3, :3] = R_ee
+        T_ee[:3, 3] = flange_pos[0].detach().cpu().numpy()
+        flange_coord = copy.deepcopy(base_coord).transform(T_ee)
 
-        pcd = target_obj_pcd[0].detach().cpu().numpy()        
-        
-        print(f'pcd shape: {pcd.shape}')
         point_cloud = o3d.geometry.PointCloud()
-        point_cloud.points = o3d.utility.Vector3dVector(pcd)
-        o3d.visualization.draw_geometries([point_cloud],
-                                            window_name=f'point cloud semantic')
+        point_cloud.points = o3d.utility.Vector3dVector(pcd_np[0])
+        o3d.visualization.draw_geometries([point_cloud, base_coord, tool_position, flange_coord])
         '''
 
         '''
@@ -523,12 +499,13 @@ class PCDReachingTargetTask(RLTask):
         pointcloud: [NE, N, 3]
         '''
         self.obs_buf = torch.cat((
-                                  pointcloud.view([pointcloud.shape[0], -1]),   # [NE, N*3], point cloud
+                                #   pointcloud.view([pointcloud.shape[0], -1]), # [NE, N*3], point cloud
+                                  self.tool_pos,                                # [NE, 3], tool position by point cloud mean   
                                   dof_pos_scaled,                               # [NE, 6]
                                 #   dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
                                   dof_vel_scaled[:, :6],                        # [NE, 6]
-                                  flange_pos,                                   # [NE, 3]
-                                  flange_rot,                                   # [NE, 4]
+                                  self.flange_pos,                              # [NE, 3]
+                                  self.flange_rot,                              # [NE, 4]
                                   goal_pos,                                     # [NE, 3]
                                  ), dim=1)
         # self.obs_buf[:, 0] = self.progress_buf / self._max_episode_length
@@ -658,8 +635,8 @@ class PCDReachingTargetTask(RLTask):
 
 
         # target reached
-        self.reset_buf = torch.where(self.current_tool_goal_distance <= 0.025, torch.ones_like(self.reset_buf), self.reset_buf)
+        reset = torch.where(self.current_tool_goal_distance <= 0.03, ones, reset)
         
         # max episode length
-        self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
+        self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, ones, reset)
 

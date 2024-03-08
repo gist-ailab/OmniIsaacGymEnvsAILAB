@@ -38,8 +38,8 @@ memory = RandomMemory(memory_size=16, num_envs=env.num_envs, device=device)
 # PPO requires 2 models, visit its documentation for more details
 # https://skrl.readthedocs.io/en/latest/api/agents/ppo.html#models
 models = {}
-models["policy"] = SharedTransformerEnc(env.observation_space, env.action_space, env.num_envs, device)
-# models["policy"] = Shared(env.observation_space, env.action_space, device)
+# models["policy"] = SharedTransformerEnc(env.observation_space, env.action_space, env.num_envs, device)
+models["policy"] = Shared(env.observation_space, env.action_space, device)
 models["value"] = models["policy"]  # same instance: shared model
 
 
@@ -82,9 +82,9 @@ cfg["experiment"]["checkpoint_interval"] = 200
 
 now = datetime.now()
 formatted_date = now.strftime("%y%m%d_%H%M%S")
-cfg["experiment"]["experiment_name"] = f"{formatted_date}_Fixed_Point_0.7_0.5_0.4"
+cfg["experiment"]["experiment_name"] = f"{formatted_date}_PCD_mean_Fixed_Point_0.7_0.5_0.4"
 
-cfg["experiment"]["directory"] = "OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/Reaching_Target_PCD"
+cfg["experiment"]["directory"] = "runs/torch/Reaching_Target_PCD"
 
 agent = PPO(models=models,
             memory=memory,
@@ -108,7 +108,7 @@ trainer.train()
 
 # # download the trained agent's checkpoint from Hugging Face Hub and load it
 # # path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-FrankaCabinet-PPO", filename="agent.pt")
-# path = './runs/torch/MovingTarget/Pointnet2+MLP/checkpoints/best_agent.pt'
+# path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/Reaching_Target_PCD/240303_230503_PCD_mean_Fixed_Point_0.7_0.5_0.4/checkpoints/best_agent.pt'
 # agent.load(path)
 
 # # start evaluation
