@@ -97,18 +97,89 @@ class PointcloudWriter(Writer):
         ply_out_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "out")
         os.makedirs(ply_out_dir, exist_ok=True)
 
+        # TODO: save point cloud as ply file
+        num_samples = self.pcd_sampling_num
+
+        previous_env_index = 0
         for annotator in data.keys():
             if annotator.startswith("pointcloud"):
-                pcd = o3d.geometry.PointCloud()
-                render_product_name = annotator.split("-")[-1]
-                file_path = f"pcd_{self._frame_id}_{render_product_name}.ply"
-                pcd_data = data[annotator]
-                pcd.points = o3d.utility.Vector3dVector(pcd_data)
-                pcd.colors = o3d.utility.Vector3dVector(pcd_data)
-                if isinstance(pcd_data, wp.types.array):
-                    pcd_data = pcd_data.numpy()
-                o3d.io.write_point_cloud(file_path, pcd)
-                self._backend.write_image(file_path, pcd_data)
+                if len(annotator.split('_'))==2:
+                    # idx = f'env_{0}'
+                    idx = 0
+                elif len(annotator.split('_'))==3:
+                    # idx = f'env_{int(annotator.split("_")[-1])}'
+                    idx = int(annotator.split("_")[-1]) # env_n
+
+                env_index = idx//3
+                env_center = self.env_pos[env_index].to(self.device)
+                
+                camera_idx = idx%3
+
+                pcd_pos = torch.from_numpy(data[annotator]['data']).to(self.device)
+                pcd_normal = torch.from_numpy(data[annotator]['info']['pointNormals']).to(self.device)
+                pcd_semantic = torch.from_numpy(data[annotator]['info']['pointSemantic'].astype(np.int32)).to(self.device)
+                pcd_pos = pcd_pos.unsqueeze(0)
+                pcd_normal = pcd_normal.unsqueeze(0)
+                pcd_semantic = pcd_semantic.unsqueeze(0)
+
+                if pcd_pos.shape[1]==0:
+                    pass
+                elif camera_idx == 0:
+                    each_env_pcd_pos = pcd_pos
+                    each_env_pcd_normal = pcd_normal
+                    each_env_pcd_semantic = pcd_semantic
+                else:
+                    try:
+                        each_env_pcd_pos = torch.cat((each_env_pcd_pos, pcd_pos), dim=1)
+                        each_env_pcd_normal = torch.cat((each_env_pcd_normal, pcd_normal), dim=1)
+                        each_env_pcd_semantic = torch.cat((each_env_pcd_semantic, pcd_semantic), dim=1)
+                    except:
+                        each_env_pcd_pos = pcd_pos
+                        each_env_pcd_normal = pcd_normal
+                        each_env_pcd_semantic = pcd_semantic
+
+                if camera_idx == 2:
+                    centerized_pcd_pos = torch.sub(each_env_pcd_pos, env_center)
+
+                    sampled_pcd_pos = self._sampling_pcd(
+                                                         idx,
+                                                         centerized_pcd_pos.squeeze(0),
+                                                         each_env_pcd_semantic.squeeze(0),
+                                                         num_samples,
+                                                         self.pcd_normalize,
+                                                         )
+                    sampled_pcd_pos = sampled_pcd_pos.unsqueeze(0)
+                    if env_index == 0:
+                        pcd_pos_tensors = sampled_pcd_pos
+                    else:
+                        pcd_pos_tensors = torch.cat((pcd_pos_tensors, sampled_pcd_pos), dim=0)
+        '''
+        pcd_np = sampled_pcd_pos.squeeze(0).detach().cpu().numpy()
+        
+        
+        print(f'pcd shape: {pcd_np.shape}')
+        point_cloud = o3d.geometry.PointCloud()
+        point_cloud.points = o3d.utility.Vector3dVector(pcd_np)
+        o3d.visualization.draw_geometries([point_cloud],
+                                            window_name=f'point cloud semantic {idx}')
+        '''
+
+        # file_path = f"pcd_{self._frame_id}_{render_product_name}.ply"
+        # TODO: save point cloud as ply file    
+
+
+        # for annotator in data.keys():
+        #     if annotator.startswith("pointcloud"):
+        #         pcd = o3d.geometry.PointCloud()
+        #         render_product_name = annotator.split("-")[-1]
+        #         file_path = f"pcd_{self._frame_id}_{render_product_name}.ply"
+        #         pcd_data = data[annotator]
+        #         pcd.points = o3d.utility.Vector3dVector(pcd_data)
+        #         pcd.colors = o3d.utility.Vector3dVector(pcd_data)
+        #         if isinstance(pcd_data, wp.types.array):
+        #             pcd_data = pcd_data.numpy()
+        #         o3d.io.write_point_cloud(file_path, pcd)
+        #         self._backend.write_image(file_path, pcd_data)
 
     @carb.profiler.profile
     def _convert_to_pytorch(self, data: dict) -> torch.Tensor:
