@@ -20,6 +20,7 @@ from omni.isaac.core.prims.rigid_prim import RigidPrim
 from omni.isaac.core.utils.prims import get_prim_at_path, is_prim_path_valid
 from omni.isaac.core.utils.stage import get_current_stage
 from omni.isaac.core.utils.string import find_unique_string_name
+from omni.isaac.core.utils.semantics import add_update_semantics
 
 from pxr import Usd, UsdGeom, Gf, UsdPhysics, Semantics
 
@@ -27,18 +28,22 @@ from pxr import Usd, UsdGeom, Gf, UsdPhysics, Semantics
 import torch
 
 my_world = World(stage_units_in_meters=1.0)
-my_world.scene.add_default_ground_plane()
+# my_world.scene.add_default_ground_plane()
 scene = Scene()
 
 stage = omni.usd.get_context().get_stage()
 
 camera_positions = {0: [1.5, 1.5, 0.5],
-                    1: [2, -1.3, 0.5],
-                    2: [-0.5, -1.2, 0.5]}
+                    1: [2, -1.3, -0.5],
+                    2: [-0.5, -1.2, 0]}
+
+# camera_positions = {0: [1.5, 1.5, 0.5],
+#                     1: [2, -1.3, 0.5],
+#                     2: [-0.5, -1.2, 0.5]}
                     # 2: [-1.5, -2.2, 0.5]}
                     # 2: [-4.8, -6.1, 0.5]}
 camera_rotations = {0: [0, -10, 50],
-                    1: [0, -10, -45],
+                    1: [0, 10, -45],
                     2: [0, -10, -130]}
 
 camera_width = 640
@@ -92,17 +97,17 @@ with rep.new_layer():
 
     add_reference_to_stage(usd_path=usd_file, prim_path=prim_path)
     simulation_app.update()
-    obj = RigidPrim(prim_path=prim_path,
-                name="power_drill",
-                position=[0, 0, 0.5],
-                scale=[1.5, 1.5, 1.5],
-                )
-    _obj = RigidPrimView(prim_paths_expr=prim_path,
-                        name="power_drill_view",
-                        reset_xform_properties=False,
-                        )
+    # obj = RigidPrim(prim_path=prim_path,
+    #             name="power_drill",
+    #             position=[0, 0, 0.5],
+    #             scale=[1.5, 1.5, 1.5],
+    #             )
+    # _obj = RigidPrimView(prim_paths_expr=prim_path,
+    #                     name="power_drill_view",
+    #                     reset_xform_properties=False,
+    #                     )
 
-    scene.add(_obj)
+    # scene.add(_obj)
 
     for i in range(len(camera_positions)):
         locals()[f"camera{i}"] = rep.create.camera(position=camera_positions[i],
@@ -126,12 +131,13 @@ with rep.new_layer():
 pointcloud_listener = PointcloudListener()
 pointcloud_writer = rep.WriterRegistry.get("PointcloudWriter")
 pointcloud_writer.initialize(listener=pointcloud_listener,
-                             output_dir="/home/bak/Documents/AllegroHand/035_power_drill",
-                             pcd_sampling_num=100,
+                             output_dir="/home/bak/Documents//035_power_drill",
+                             pcd_sampling_num=4000,
                              pcd_normalize = False,
                              env_pos = env_pos,
                              camera_positions=camera_positions,
                              camera_orientations=camera_rotations,
+                             name="power_drill",
                              device=device,
                             )
 
@@ -146,6 +152,7 @@ obj_semantics.CreateSemanticTypeAttr()
 obj_semantics.CreateSemanticDataAttr()
 obj_semantics.GetSemanticTypeAttr().Set("class")
 obj_semantics.GetSemanticDataAttr().Set(f"obj_{i}")
+add_update_semantics(obj_prim, '0')
 simulation_app.update()
 
 # # preview 부분까지 Script Editor에 복붙해서 실행시키면 어떤 환경을 찍어서 보여줄지 확인 가능
@@ -155,13 +162,16 @@ simulation_app.update()
 # Run the simulation graph
 # rep.orchestrator.run()
 
+count = 0
 while simulation_app.is_running():
     rep.orchestrator.run()
     pointcloud = pointcloud_listener.get_pointcloud_data()
     simulation_app.update()
+    count += 1
 
-
-
-
+    if count > 1:
+        simulation_app.close()
+    
+    # exit()
 
 # simulation_app.close()
