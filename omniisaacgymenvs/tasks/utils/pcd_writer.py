@@ -45,15 +45,16 @@ class PointcloudWriter(Writer):
                  camera_positions: dict = None,
                  camera_orientations: tuple = None,
                  visualize_point_cloud: bool = False,
+                 name: Optional[str] = None,
                  device: str = "cuda"):
         # If output directory is specified, writer will write annotated data to the given directory
-        if output_dir:
-            self.backend = BackendDispatch({"paths": {"out_dir": output_dir}})
-            self._backend = self.backend
-            self._output_dir = self.backend.output_dir
-        else:
-            self._output_dir = None
-        self._frame_id = 0
+        # if output_dir:
+        #     self.backend = BackendDispatch({"paths": {"out_dir": output_dir}})
+        #     self._backend = self.backend
+        #     self._output_dir = self.backend.output_dir
+        # else:
+        #     self._output_dir = None
+        # self._frame_id = 0
 
         self.annotators = [AnnotatorRegistry.get_annotator("pointcloud")]
         self.listener = listener
@@ -64,6 +65,7 @@ class PointcloudWriter(Writer):
         self.camera_positions = camera_positions
         self.camera_orientations = camera_orientations
         self.visualize_point_cloud = visualize_point_cloud
+        self.name = name
         self.device = device
 
     def write(self, data: dict) -> None:
@@ -74,88 +76,43 @@ class PointcloudWriter(Writer):
             data (dict): Data to be pinged to the listener and written to the output directory if specified.
         """
         pointcloud = self._convert_to_pointcloud(data)
-        if self._output_dir:
-            # Write RGB data to output directory as png
-            self._write_pcd(data)   # 이부분은 point cloud 저장하고 싶을 때 따로 함수 변경하자.
-        # pytorch_rgb = self._convert_to_pytorch(data).to(self.device)
+        if self.output_dir:
+            # Write PCD data to output directory as png
+            self._write_pcd(pointcloud)   # 이부분은 point cloud 저장하고 싶을 때 따로 함수 변경하자.
         
         self.listener.write_data(pointcloud)
-        self._frame_id += 1
-
-    @carb.profiler.profile
-    def _write_rgb(self, data: dict) -> None:
-        for annotator in data.keys():
-            if annotator.startswith("LdrColor"):
-                render_product_name = annotator.split("-")[-1]
-                file_path = f"rgb_{self._frame_id}_{render_product_name}.png"
-                img_data = data[annotator]
-                if isinstance(img_data, wp.types.array):
-                    img_data = img_data.numpy()
-                self._backend.write_image(file_path, img_data)
+        # self._frame_id += 1
 
     @carb.profiler.profile
     def _write_pcd(self, data: dict) -> None:
-        # TODO: ply로 저장해서 pointcloud를 확인해보고 싶다면 이 함수를 수정
-        ply_out_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "out")
+        if self.output_dir:
+            ply_out_dir = self.output_dir
+        else:
+            project_path = os.path.abspath('./')
+            ply_out_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "pcd_out")
         os.makedirs(ply_out_dir, exist_ok=True)
+        
+        if self.name is None:
+            from datetime import datetime
+            now = datetime.now()
+            formatted_date = now.strftime("%y%m%d_%H%M%S")
+            file_path = os.path.join(ply_out_dir, f"pcd_{formatted_date}.ply")
+        else:
+            file_path = os.path.join(ply_out_dir, f"pcd_{self.name}.ply")
 
-        # TODO: save point cloud as ply file
-        num_samples = self.pcd_sampling_num
+        if isinstance(data, torch.Tensor):
+            pcd_np = data.squeeze(0).detach().cpu().numpy()
+        else:
+            pcd_np = data.copy()
 
-        previous_env_index = 0
-        for annotator in data.keys():
-            if annotator.startswith("pointcloud"):
-                if len(annotator.split('_'))==2:
-                    # idx = f'env_{0}'
-                    idx = 0
-                elif len(annotator.split('_'))==3:
-                    # idx = f'env_{int(annotator.split("_")[-1])}'
-                    idx = int(annotator.split("_")[-1]) # env_n
 
-                env_index = idx//3
-                env_center = self.env_pos[env_index].to(self.device)
-                
-                camera_idx = idx%3
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pcd_np)
+        o3d.io.write_point_cloud(file_path, pcd)
 
-                pcd_pos = torch.from_numpy(data[annotator]['data']).to(self.device)
-                pcd_normal = torch.from_numpy(data[annotator]['info']['pointNormals']).to(self.device)
-                pcd_semantic = torch.from_numpy(data[annotator]['info']['pointSemantic'].astype(np.int32)).to(self.device)
-                pcd_pos = pcd_pos.unsqueeze(0)
-                pcd_normal = pcd_normal.unsqueeze(0)
-                pcd_semantic = pcd_semantic.unsqueeze(0)
-
-                if pcd_pos.shape[1]==0:
-                    pass
-                elif camera_idx == 0:
-                    each_env_pcd_pos = pcd_pos
-                    each_env_pcd_normal = pcd_normal
-                    each_env_pcd_semantic = pcd_semantic
-                else:
-                    try:
-                        each_env_pcd_pos = torch.cat((each_env_pcd_pos, pcd_pos), dim=1)
-                        each_env_pcd_normal = torch.cat((each_env_pcd_normal, pcd_normal), dim=1)
-                        each_env_pcd_semantic = torch.cat((each_env_pcd_semantic, pcd_semantic), dim=1)
-                    except:
-                        each_env_pcd_pos = pcd_pos
-                        each_env_pcd_normal = pcd_normal
-                        each_env_pcd_semantic = pcd_semantic
-
-                if camera_idx == 2:
-                    centerized_pcd_pos = torch.sub(each_env_pcd_pos, env_center)
-
-                    sampled_pcd_pos = self._sampling_pcd(
-                                                         idx,
-                                                         centerized_pcd_pos.squeeze(0),
-                                                         each_env_pcd_semantic.squeeze(0),
-                                                         num_samples,
-                                                         self.pcd_normalize,
-                                                         )
-                    sampled_pcd_pos = sampled_pcd_pos.unsqueeze(0)
-                    if env_index == 0:
-                        pcd_pos_tensors = sampled_pcd_pos
-                    else:
-                        pcd_pos_tensors = torch.cat((pcd_pos_tensors, sampled_pcd_pos), dim=0)
         '''
+        # check point cloud
+
         pcd_np = sampled_pcd_pos.squeeze(0).detach().cpu().numpy()
         
         
@@ -165,23 +122,6 @@ class PointcloudWriter(Writer):
         o3d.visualization.draw_geometries([point_cloud],
                                             window_name=f'point cloud semantic {idx}')
         '''
-
-        # file_path = f"pcd_{self._frame_id}_{render_product_name}.ply"
-        # TODO: save point cloud as ply file    
-
-
-        # for annotator in data.keys():
-        #     if annotator.startswith("pointcloud"):
-        #         pcd = o3d.geometry.PointCloud()
-        #         render_product_name = annotator.split("-")[-1]
-        #         file_path = f"pcd_{self._frame_id}_{render_product_name}.ply"
-        #         pcd_data = data[annotator]
-        #         pcd.points = o3d.utility.Vector3dVector(pcd_data)
-        #         pcd.colors = o3d.utility.Vector3dVector(pcd_data)
-        #         if isinstance(pcd_data, wp.types.array):
-        #             pcd_data = pcd_data.numpy()
-        #         o3d.io.write_point_cloud(file_path, pcd)
-        #         self._backend.write_image(file_path, pcd_data)
 
     @carb.profiler.profile
     def _convert_to_pytorch(self, data: dict) -> torch.Tensor:
@@ -227,7 +167,7 @@ class PointcloudWriter(Writer):
 
                 pcd_pos = torch.from_numpy(data[annotator]['data']).to(self.device)
                 pcd_normal = torch.from_numpy(data[annotator]['info']['pointNormals']).to(self.device)
-                pcd_semantic = torch.from_numpy(data[annotator]['info']['pointSemantic']).to(self.device)
+                pcd_semantic = torch.from_numpy(data[annotator]['info']['pointSemantic'].astype('int64')).to(self.device)
 
                 pcd_pos = pcd_pos.unsqueeze(0)
                 pcd_normal = pcd_normal.unsqueeze(0)
