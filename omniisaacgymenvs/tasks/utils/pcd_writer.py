@@ -57,6 +57,7 @@ class PointcloudWriter(Writer):
 
         self.annotators = [AnnotatorRegistry.get_annotator("pointcloud")]
         self.listener = listener
+        self.output_dir = output_dir
         self.pcd_sampling_num = pcd_sampling_num
         self.pcd_normalize = pcd_normalize
         self.env_pos = env_pos
@@ -72,11 +73,12 @@ class PointcloudWriter(Writer):
         Args:
             data (dict): Data to be pinged to the listener and written to the output directory if specified.
         """
+        pointcloud = self._convert_to_pointcloud(data)
         if self._output_dir:
             # Write RGB data to output directory as png
             self._write_pcd(data)   # 이부분은 point cloud 저장하고 싶을 때 따로 함수 변경하자.
         # pytorch_rgb = self._convert_to_pytorch(data).to(self.device)
-        pointcloud = self._convert_to_pointcloud(data)
+        
         self.listener.write_data(pointcloud)
         self._frame_id += 1
 
