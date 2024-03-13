@@ -33,18 +33,24 @@ scene = Scene()
 
 stage = omni.usd.get_context().get_stage()
 
-camera_positions = {0: [1.5, 1.5, 0.5],
-                    1: [2, -1.3, -0.5],
-                    2: [-0.5, -1.2, 0]}
+# camera_positions = {0: [1.5, 1.5, 0.5],
+#                     1: [2, -1.3, -0.5],
+#                     2: [-0.5, -1.2, 0]}
 
 # camera_positions = {0: [1.5, 1.5, 0.5],
 #                     1: [2, -1.3, 0.5],
 #                     2: [-0.5, -1.2, 0.5]}
                     # 2: [-1.5, -2.2, 0.5]}
                     # 2: [-4.8, -6.1, 0.5]}
-camera_rotations = {0: [0, -10, 50],
-                    1: [0, 10, -45],
-                    2: [0, -10, -130]}
+camera_rotations = {0: [0, -35, 45],
+                    1: [180, 145, -45],
+                    2: [0, -35, -135],
+                    3: [0, 35, -50]}
+
+camera_positions = {0: [1, 1, 1],
+                    1: [-1, 1, -1],
+                    2: [-1, -1, 1],
+                    3: [1, -1, -1]}
 
 camera_width = 640
 camera_height = 640
@@ -56,8 +62,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 render_products = []
 
 # Load usd object
-usd_file = "/home/bak/Documents/project_proposal/035_power_drill/35_power_drill.usd"
-prim_path = "/World/power_drill"    # power_drill 앞에 숫자가 오면 안된다. 숫자가 있으면 오류남
+usd_file = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/tool.usd"
+prim_path = "/World/tool"    # power_drill 앞에 숫자가 오면 안된다. 숫자가 있으면 오류남
+# usd_file = "/home/bak/Documents/project_proposal/035_power_drill/35_power_drill.usd"
+# prim_path = "/World/power_drill"    # power_drill 앞에 숫자가 오면 안된다. 숫자가 있으면 오류남
 # add_reference_to_stage(usd_path=usd_file, prim_path=prim_path)
 # obj = my_world.scene.add(prim_path)
 
@@ -96,6 +104,7 @@ with rep.new_layer():
     distance_light = rep.create.light(rotation=(1000,0,0), intensity=3000, light_type="distant")
 
     add_reference_to_stage(usd_path=usd_file, prim_path=prim_path)
+    obj_prim_path = get_prim_at_path(prim_path)
     simulation_app.update()
     # obj = RigidPrim(prim_path=prim_path,
     #             name="power_drill",
@@ -110,9 +119,15 @@ with rep.new_layer():
     # scene.add(_obj)
 
     for i in range(len(camera_positions)):
-        locals()[f"camera{i}"] = rep.create.camera(position=camera_positions[i],
+        locals()[f"camera{i}"] = rep.create.camera(
+                                                #    look_at=[0, 0, 0],
+                                                   position=camera_positions[i],
                                                    rotation=camera_rotations[i],
+                                                   name=f"camera{i}"
                                                    )
+        # locals()[f"camera{i}"] = rep.create.camera(position=camera_positions[i],
+        #                                            rotation=camera_rotations[i],
+        #                                            )
         render_product = rep.create.render_product(locals()[f"camera{i}"],
                                                    resolution=(camera_width, camera_height))
         render_products.append(render_product)
@@ -131,13 +146,13 @@ with rep.new_layer():
 pointcloud_listener = PointcloudListener()
 pointcloud_writer = rep.WriterRegistry.get("PointcloudWriter")
 pointcloud_writer.initialize(listener=pointcloud_listener,
-                             output_dir="/home/bak/Documents//035_power_drill",
+                             output_dir="/home/bak/Documents/tool",
                              pcd_sampling_num=4000,
                              pcd_normalize = False,
                              env_pos = env_pos,
                              camera_positions=camera_positions,
                              camera_orientations=camera_rotations,
-                             name="power_drill",
+                             name="tool",
                              device=device,
                             )
 
@@ -160,18 +175,38 @@ simulation_app.update()
 # rep.orchestrator.preview()
 
 # Run the simulation graph
-# rep.orchestrator.run()
+rep.orchestrator.run()
 
-count = 0
-while simulation_app.is_running():
-    rep.orchestrator.run()
-    pointcloud = pointcloud_listener.get_pointcloud_data()
-    simulation_app.update()
-    count += 1
+# count = 0
+# for i in range(2):
+#     pointcloud = pointcloud_listener.get_pointcloud_data()
+#     simulation_app.update()
 
-    if count > 1:
-        simulation_app.close()
-    
-    # exit()
+# print("===================")
+# print("Simulation is done")
+# print("===================")
 
 # simulation_app.close()
+
+# exit()
+
+
+
+while simulation_app.is_running():
+    # rep.orchestrator.run()
+    pointcloud = pointcloud_listener.get_pointcloud_data()
+    simulation_app.update()
+#     count += 1
+
+#     if count > 1:
+#         simulation_app.close()
+#         print("===================")
+#         print("Simulation is done")
+#         print("===================")
+#     break
+#     #     exit()
+
+    
+# exit()
+
+# # simulation_app.close()
