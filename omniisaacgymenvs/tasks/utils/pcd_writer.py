@@ -122,25 +122,6 @@ class PointcloudWriter(Writer):
         o3d.visualization.draw_geometries([point_cloud],
                                             window_name=f'point cloud semantic {idx}')
         '''
-
-    @carb.profiler.profile
-    def _convert_to_pytorch(self, data: dict) -> torch.Tensor:
-        # 이 함수는 이미지를 torch tensor로 바꿔주는 함수
-        if data is None:
-            raise Exception("Data is Null")
-
-        data_tensors = []
-        for annotator in data.keys():
-            if annotator.startswith("LdrColor"):
-                data_tensors.append(wp.to_torch(data[annotator]).unsqueeze(0))
-                # data[annotator] 데이터 형식은 Nvidia의 warp 형식이다. 이를 pytorch 형식으로 바꿔준다.
-
-        # Move all tensors to the same device for concatenation
-        device = "cuda:0" if self.device == "cuda" else self.device
-        data_tensors = [t.to(device) for t in data_tensors]
-
-        data_tensor = torch.cat(data_tensors, dim=0)
-        return data_tensor
     
     @carb.profiler.profile
     def _convert_to_pointcloud(self, data: dict) -> torch.Tensor:
