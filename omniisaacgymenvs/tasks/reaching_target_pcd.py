@@ -31,7 +31,11 @@ from typing import Optional, Tuple
 import asyncio
 
 import open3d as o3d
+import open3d.core as o3c
 import point_cloud_utils as pcu
+import pytorch3d
+from pytorch3d.transforms import quaternion_to_matrix, Transform3d
+
 import copy
 
 
@@ -88,19 +92,48 @@ class PCDReachingTargetTask(RLTask):
 
         self._pcd_sampling_num = self._task_cfg["sim"]["point_cloud_samples"]
         self._num_pcd_masks = 1
+
+        # get tool point cloud from ply and convert it to torch tensor
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        tool_o3d_pcd = o3d.io.read_point_cloud("/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/tool.ply")
+        o3d_downsampled_pcd = tool_o3d_pcd.farthest_point_down_sample(self._pcd_sampling_num)
+        downsampled_points = np.array(o3d_downsampled_pcd.points)
+        tool_pcd = torch.from_numpy(downsampled_points).to(device)
+        self.tool_pcd = tool_pcd.unsqueeze(0).repeat(self._num_envs, 1, 1)
+        self.tool_pcd = self.tool_pcd.float()
+
+        # # visulization point cloud
+        # org_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.1, origin=np.array([0, 0, 0]))
+        # o3d.visualization.draw_geometries([tool_o3d_pcd, org_coord], window_name=f'point cloud')
+
+        # # visualization point cloud tensor
+        # o3d_tensor = o3c.Tensor.from_dlpack(torch.utils.dlpack.to_dlpack(self.tool_pcd[0]))
+        # o3d_pcd_tensor = o3d.t.geometry.PointCloud(o3d_tensor)
+        # o3d_pcd_np = o3d_pcd_tensor.point.positions.cpu().numpy()
+        # pcd = o3d.geometry.PointCloud()
+        # pcd.points = o3d.utility.Vector3dVector(o3d_pcd_np)
+        # org_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.1, origin=np.array([0, 0, 0]))
+        # o3d.visualization.draw_geometries([pcd, org_coord], window_name=f'point cloud')
+        
+        self.tool_pcd_pos = torch.tensor([0.0, 0.0, 0.0], device=device)
+        self.tool_pcd_pos = self.tool_pcd_pos.unsqueeze(0).repeat(self._num_envs, 1)
+        tool_pcd_rot = tool_o3d_pcd.get_rotation_matrix_from_xyz((0,0,0))
+        self.tool_pcd_rot = torch.from_numpy(tool_pcd_rot).to(device=device)
+        self.tool_pcd_rot = self.tool_pcd_rot.unsqueeze(0).repeat(self._num_envs, 1, 1)
+
+
         
         # observation and action space
         # pcd_observations = self._pcd_sampling_num * 2 * 3     # 2 is a number of point cloud masks and 3 is a cartesian coordinate
         pcd_observations = self._pcd_sampling_num * self._num_pcd_masks * 3     # 1 is a number of point cloud masks and 3 is a cartesian coordinate
-        # self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 3
-        self._num_observations = 3 + 6 + 6 + 3 + 4 + 3  # tool position, robot dof pos, robot dof vel, flange pos, flange rot, goal pos
+        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 3
+        # self._num_observations = 3 + 6 + 6 + 3 + 4 + 3  # tool position, robot dof pos, robot dof vel, flange pos, flange rot, goal pos
         '''
         refer to observations in get_observations()
         dof_pos_scaled,                               # [NE, 6]
         dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
         flange_pos,                                   # [NE, 3]
         flange_rot,                                   # [NE, 4]
-        target_pos,                                   # [NE, 3]
         goal_pos,                                     # [NE, 3]
         
         '''
@@ -151,7 +184,7 @@ class PCDReachingTargetTask(RLTask):
     def set_up_scene(self, scene) -> None:
         self.get_robot()
         self.get_goal()
-        # self.get_lidar(idx=0, scene=scene)
+        
 
         # RLTask.set_up_scene(self, scene)
         super().set_up_scene(scene)
@@ -160,12 +193,15 @@ class PCDReachingTargetTask(RLTask):
         self._robots = UR5eView(prim_paths_expr="/World/envs/.*/robot", name="robot_view")
         # flanges view
         self._flanges = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/{self._flange_link}", name="end_effector_view")
+        # tool view
+        self._tools = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/tool", name="tool_view")
         # goal view
         self._goals = RigidPrimView(prim_paths_expr="/World/envs/.*/goal", name="goal_view", reset_xform_properties=False)
         self._goals._non_root_link = True   # do not set states for kinematics
 
         scene.add(self._robots)
         scene.add(self._flanges)
+        scene.add(self._tools)
         scene.add(self._goals)
 
         self.init_data()        
@@ -259,15 +295,19 @@ class PCDReachingTargetTask(RLTask):
             scene.remove("robot_view", registry_only=True)
         if scene.object_exist("end_effector_view"):
             scene.remove("end_effector_view", registry_only=True)
+        if scene.object_exist("tool_view"):
+            scene.remove("tool_view", registry_only=True)        
         if scene.object_exist("goal_view"):
             scene.remove("goal_view", registry_only=True)
 
         self._robots = UR5eView(prim_paths_expr="/World/envs/.*/robot", name="robot_view")
         self._flanges = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/{self._flange_link}", name="end_effector_view")
+        self._tools = RigidPrimView(prim_paths_expr="/World/envs/.*/robot/tool", name="tool_view")
         self._goals = RigidPrimView(prim_paths_expr="/World/envs/.*/goal", name="goal_view", reset_xform_properties=False)
 
         scene.add(self._robots)
         scene.add(self._flanges)
+        scene.add(self._tools)
         scene.add(self._goals)
         
         self.init_data()
@@ -399,13 +439,89 @@ class PCDReachingTargetTask(RLTask):
         reset_mask = (progress_count == 1).squeeze()
         newly_started_env_idx = torch.flatten(torch.nonzero(reset_mask))
 
-
-
-
         pointcloud = self.pointcloud_listener.get_pointcloud_data()
+        # 어떤 pcd instance를 가져오던 원점은 [0, 0, 0]이다. 따라서, 각 env의 flange pose를 가져와서 변환해줘야 한다.
         # index에 해당하는 거만 가져와도 속도가 빨라질까????
 
+        # TODO: torch.matmul을 이용하여 batched matrix x batched matrix
+
+
+        view_idx = 0
+        flange_pos, flange_rot_quaternion = self._flanges.get_local_poses()
+        flange_rot = quaternion_to_matrix(flange_rot_quaternion)
+        flange_pos_np = flange_pos[view_idx].cpu().numpy()
+        flange_rot_np = flange_rot[view_idx].cpu().numpy()
+
+        tool_pos, tool_rot_quaternion = self._tools.get_local_poses()
+        self.tool_pos = tool_pos
+        tool_rot = quaternion_to_matrix(tool_rot_quaternion)
+        tool_pos_np = tool_pos[view_idx].cpu().numpy()
+        tool_rot_np = tool_rot[view_idx].cpu().numpy()
+
+        pcd_np = pointcloud[view_idx].detach().cpu().numpy()
+
+        T_base = torch.eye(4, device=self._device).unsqueeze(0).repeat(self._num_envs, 1, 1)
+        # base_coord = torch.tensor([0.0, 0.0, 0.0, 1], device=self._device)
+        # base_coord = base_coord.unsqueeze(0).repeat(self._num_envs, 1,1)
+        # base_coord = base_coord.permute(0, 2, 1)      
         
+        T_base_to_flange = torch.eye(4, device=self._device).unsqueeze(0).repeat(self._num_envs, 1, 1)
+        T_base_to_flange[:, :3, :3] = flange_rot.clone().detach()
+        T_base_to_flange[:, :3, 3] = flange_pos.clone().detach()
+        # T_flange = torch.matmul(T_base_to_flange, T_base)
+
+        T_base_to_tool = torch.eye(4, device=self._device).unsqueeze(0).repeat(self._num_envs, 1, 1)
+        T_base_to_tool[:, :3, :3] = tool_rot.clone().detach()
+        T_base_to_tool[:, :3, 3] = tool_pos.clone().detach()
+
+
+
+
+
+        B, N, _ = self.tool_pcd.shape
+        # Convert points to homogeneous coordinates by adding a dimension with ones
+        homogeneous_points = torch.cat([self.tool_pcd, torch.ones(B, N, 1, device=self.tool_pcd.device)], dim=-1)
+
+        # Perform batch matrix multiplication
+        transformed_points_homogeneous = torch.bmm(homogeneous_points, T_base_to_tool.transpose(1, 2))
+
+        # Convert back from homogeneous coordinates by removing the last dimension
+        points_transformed = transformed_points_homogeneous[..., :3]
+
+
+        # t= Transform3d(matrix=T_base_to_flange)
+        # points_transformed = t.transform_points(self.tool_pcd)
+
+
+        # visualize point cloud
+        pcd_np = pointcloud[view_idx].squeeze(0).detach().cpu().numpy()
+
+        transformed_pcd_np = points_transformed[view_idx].squeeze(0).detach().cpu().numpy()
+        
+        point_cloud = o3d.geometry.PointCloud()
+        transformed_point_cloud = o3d.geometry.PointCloud()
+        point_cloud.points = o3d.utility.Vector3dVector(pcd_np)
+        transformed_point_cloud.points = o3d.utility.Vector3dVector(transformed_pcd_np)
+
+        base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
+        T_ee = np.eye(4)
+        T_ee[:3, :3] = flange_rot_np
+        T_ee[:3, 3] = flange_pos_np
+        # T_l_e = np.matmul(T_b_inv, T_ee)
+        flange_coord = copy.deepcopy(base_coord).transform(T_ee)
+
+        T_t = np.eye(4)
+        T_t[:3, :3] = tool_rot_np
+        T_t[:3, 3] = tool_pos_np
+        tool_coord = copy.deepcopy(base_coord).transform(T_t)
+
+        o3d.visualization.draw_geometries([point_cloud, transformed_point_cloud, base_coord, flange_coord, tool_coord],
+                                    window_name=f'point cloud')
+
+        o3d.visualization.draw_geometries([point_cloud, transformed_point_cloud, base_coord, tool_coord],
+                                            window_name=f'point cloud')
+        
+
         '''
         아래는 나중에 도구의 pose도 변할 때 사용.
         progress_buf를 확인하여 1로 되어있는 idx를 찾는다.
@@ -416,8 +532,8 @@ class PCDReachingTargetTask(RLTask):
 
 
         # get tool position from point cloud
-        self.tool_pos = torch.mean(pointcloud, dim=1)
-        tool_pos = self.tool_pos
+        self.tool_mean = torch.mean(pointcloud, dim=1)
+        tool_mean = self.tool_mean
 
         '''
         아래 순서로 최종 obs_buf에 concat. 첫 차원은 환경 갯수
@@ -433,12 +549,12 @@ class PCDReachingTargetTask(RLTask):
         robot_dof_vel = self._robots.get_joint_velocities(clone=False)[:, 0:6]  # get robot dof velocity from 1st to 6th joint
         # rest of the joints are not used for control. They are fixed joints at each episode.
 
-        flange_pos, flange_rot = self._flanges.get_local_poses()
+        
         # target_pos, target_rot = self._targets.get_local_poses()    # TODO: 물체의 pose는 명시적인 것이 아닌, pcd를 이용하도록 하자.
         goal_pos, goal_rot = self._goals.get_local_poses()
         
         self.flange_pos = copy.deepcopy(flange_pos)
-        self.flange_rot = copy.deepcopy(flange_rot)
+        self.flange_rot = copy.deepcopy(flange_rot_quaternion)
         self.goal_pos = copy.deepcopy(goal_pos)
 
         if self.previous_tool_goal_distance is None:
@@ -499,8 +615,8 @@ class PCDReachingTargetTask(RLTask):
         pointcloud: [NE, N, 3]
         '''
         self.obs_buf = torch.cat((
-                                #   pointcloud.view([pointcloud.shape[0], -1]), # [NE, N*3], point cloud
-                                  self.tool_pos,                                # [NE, 3], tool position by point cloud mean   
+                                  pointcloud.view([pointcloud.shape[0], -1]), # [NE, N*3], point cloud
+                                #   self.tool_mean,                                # [NE, 3], tool position by point cloud mean   
                                   dof_pos_scaled,                               # [NE, 6]
                                 #   dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
                                   dof_vel_scaled[:, :6],                        # [NE, 6]
