@@ -206,60 +206,60 @@ class PCDReachingTargetTask(RLTask):
 
         self.init_data()        
         
-        # point cloud view
-        self.render_products = []
-        # camera_positions = {0: [2, 1.5, 0.5],
-        camera_positions = {0: [1.5, 1.5, 0.5],
-                            1: [2, -1.3, 0.5],
-                            2: [-0.5, -1.2, 0.5]}
-                            # 2: [-1.5, -2.2, 0.5]}
-                            # 2: [-4.8, -6.1, 0.5]}
-        camera_rotations = {0: [0, -10, 50],
-                            1: [0, -10, -45],
-                            2: [0, -10, -130]}
-        env_pos = self._env_pos.cpu()
+        # # point cloud view
+        # self.render_products = []
+        # # camera_positions = {0: [2, 1.5, 0.5],
+        # camera_positions = {0: [1.5, 1.5, 0.5],
+        #                     1: [2, -1.3, 0.5],
+        #                     2: [-0.5, -1.2, 0.5]}
+        #                     # 2: [-1.5, -2.2, 0.5]}
+        #                     # 2: [-4.8, -6.1, 0.5]}
+        # camera_rotations = {0: [0, -10, 50],
+        #                     1: [0, -10, -45],
+        #                     2: [0, -10, -130]}
+        # env_pos = self._env_pos.cpu()
 
-        # Used to get depth data from the camera
-        for i in range(self._num_envs):
-            # self.rep.get.camera()   # 이건 USD에 있는 camera를 가져오는 것이고, 아래는 새로운 camera를 만드는 것
-            for j in range(3):
-                locals()[f"camera_{j}"] = self.rep.create.camera(
-                                                                 position = (env_pos[i][0] + camera_positions[j][0],
-                                                                             env_pos[i][1] + camera_positions[j][1],
-                                                                             env_pos[i][2] + camera_positions[j][2]),
-                                                                 rotation=(camera_rotations[j][0],
-                                                                           camera_rotations[j][1],
-                                                                           camera_rotations[j][2]), 
-                                                                 focal_length=18.0,
-                                                                 focus_distance=400,
-                                                                 horizontal_aperture=20.955,
-                                                                 # vertical_aperture=0.2016,
-                                                                 # clipping_range=(0.5, 3.86),
-                                                                 clipping_range=(0.01, 3),
-                                                                 # TODO: clipping range 조절해서 환경이 서로 안 겹치게 하자.
-                                                                #  parent=self.stage.GetPrimAtPath(f"/World/envs/env_{i}"),
-                                                                #  parent=f"/World/envs/env_{i}",
-                                                                #  name=f"camera_{j}"
-                                                                 )
+        # # Used to get depth data from the camera
+        # for i in range(self._num_envs):
+        #     # self.rep.get.camera()   # 이건 USD에 있는 camera를 가져오는 것이고, 아래는 새로운 camera를 만드는 것
+        #     for j in range(3):
+        #         locals()[f"camera_{j}"] = self.rep.create.camera(
+        #                                                          position = (env_pos[i][0] + camera_positions[j][0],
+        #                                                                      env_pos[i][1] + camera_positions[j][1],
+        #                                                                      env_pos[i][2] + camera_positions[j][2]),
+        #                                                          rotation=(camera_rotations[j][0],
+        #                                                                    camera_rotations[j][1],
+        #                                                                    camera_rotations[j][2]), 
+        #                                                          focal_length=18.0,
+        #                                                          focus_distance=400,
+        #                                                          horizontal_aperture=20.955,
+        #                                                          # vertical_aperture=0.2016,
+        #                                                          # clipping_range=(0.5, 3.86),
+        #                                                          clipping_range=(0.01, 3),
+        #                                                          # TODO: clipping range 조절해서 환경이 서로 안 겹치게 하자.
+        #                                                         #  parent=self.stage.GetPrimAtPath(f"/World/envs/env_{i}"),
+        #                                                         #  parent=f"/World/envs/env_{i}",
+        #                                                         #  name=f"camera_{j}"
+        #                                                          )
                 
-                render_product = self.rep.create.render_product(locals()[f"camera_{j}"], resolution=(self.camera_width, self.camera_height))
-                self.render_products.append(render_product)
+        #         render_product = self.rep.create.render_product(locals()[f"camera_{j}"], resolution=(self.camera_width, self.camera_height))
+        #         self.render_products.append(render_product)
 
-        # start replicator to capture image data
-        self.rep.orchestrator._orchestrator._is_started = True
+        # # start replicator to capture image data
+        # self.rep.orchestrator._orchestrator._is_started = True
 
-        # initialize pytorch writer for vectorized collection
-        self.pointcloud_listener = self.PointcloudListener()
-        self.pointcloud_writer = self.rep.WriterRegistry.get("PointcloudWriter")
-        self.pointcloud_writer.initialize(listener=self.pointcloud_listener,
-                                          pcd_sampling_num=self._pcd_sampling_num,
-                                          pcd_normalize = self._pcd_normalization,
-                                          env_pos = self._env_pos.cpu(),
-                                          camera_positions=camera_positions,
-                                          camera_orientations=camera_rotations,
-                                          device=self.device,
-                                          )
-        self.pointcloud_writer.attach(self.render_products)
+        # # initialize pytorch writer for vectorized collection
+        # self.pointcloud_listener = self.PointcloudListener()
+        # self.pointcloud_writer = self.rep.WriterRegistry.get("PointcloudWriter")
+        # self.pointcloud_writer.initialize(listener=self.pointcloud_listener,
+        #                                   pcd_sampling_num=self._pcd_sampling_num,
+        #                                   pcd_normalize = self._pcd_normalization,
+        #                                   env_pos = self._env_pos.cpu(),
+        #                                   camera_positions=camera_positions,
+        #                                   camera_orientations=camera_rotations,
+        #                                   device=self.device,
+        #                                   )
+        # self.pointcloud_writer.attach(self.render_products)
         ################################################################################## 231121 added BSH
             
         # # get robot semantic data
@@ -275,16 +275,16 @@ class PCDReachingTargetTask(RLTask):
         #     # add_update_semantics(robot_prim, '0')
 
 
-        # get tool semantic data
-        self._tool_semantics = {}
-        for i in range(self._num_envs):
-            tool_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/robot/tool")
-            self._tool_semantics[i] = Semantics.SemanticsAPI.Apply(tool_prim, "Semantics")
-            self._tool_semantics[i].CreateSemanticTypeAttr()
-            self._tool_semantics[i].CreateSemanticDataAttr()
-            self._tool_semantics[i].GetSemanticTypeAttr().Set("class")
-            self._tool_semantics[i].GetSemanticDataAttr().Set(f"tool_{i}")
-        #     add_update_semantics(tool_prim, '1')    # added for fixing the order of semantic index
+        # # get tool semantic data
+        # self._tool_semantics = {}
+        # for i in range(self._num_envs):
+        #     tool_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/robot/tool")
+        #     self._tool_semantics[i] = Semantics.SemanticsAPI.Apply(tool_prim, "Semantics")
+        #     self._tool_semantics[i].CreateSemanticTypeAttr()
+        #     self._tool_semantics[i].CreateSemanticDataAttr()
+        #     self._tool_semantics[i].GetSemanticTypeAttr().Set("class")
+        #     self._tool_semantics[i].GetSemanticDataAttr().Set(f"tool_{i}")
+        # #     add_update_semantics(tool_prim, '1')    # added for fixing the order of semantic index
 
         
 
@@ -361,9 +361,9 @@ class PCDReachingTargetTask(RLTask):
         
         progress_count = self.progress_buf
 
-        pointcloud = self.pointcloud_listener.get_pointcloud_data()
+        # pointcloud = self.pointcloud_listener.get_pointcloud_data()
 
-        flange_pos, flange_rot_quaternion = self._flanges.get_local_poses()
+        self.flange_pos, self.flange_rot = self._flanges.get_local_poses()
 
         tool_pos, tool_rot_quaternion = self._tools.get_local_poses()
         self.tool_pos = tool_pos
@@ -387,51 +387,46 @@ class PCDReachingTargetTask(RLTask):
         points_transformed = transformed_points_homogeneous[..., :3]
 
         # calculate farthest distance and idx from the tool to the goal
-        diff = points_transformed - flange_pos[:, None, :]
+        diff = points_transformed - self.flange_pos[:, None, :]
         distance = diff.norm(dim=2)  # [B, N]
 
         # Find the index and value of the farthest point from the base coordinate
         farthest_idx = distance.argmax(dim=1)  # [B]
-        farthest_val = distance.gather(1, farthest_idx.unsqueeze(1)).squeeze(1)  # [B]
+        # farthest_val = distance.gather(1, farthest_idx.unsqueeze(1)).squeeze(1)  # [B]
+        self.tool_end_point = points_transformed.gather(1, farthest_idx.view(B, 1, 1).expand(B, 1, 3)).squeeze(1).squeeze(1)  # [B, 3]
 
 
-        #########################################################
-        ################# visualize point cloud #################
-        view_idx = 0
-        tool_pos_np = tool_pos[view_idx].cpu().numpy()
-        tool_rot_np = tool_rot[view_idx].cpu().numpy()
+        # #########################################################
+        # ################# visualize point cloud #################
+        # view_idx = 0
+        # tool_pos_np = tool_pos[view_idx].cpu().numpy()
+        # tool_rot_np = tool_rot[view_idx].cpu().numpy()
 
-        pcd_np = pointcloud[view_idx].squeeze(0).detach().cpu().numpy()
+        # pcd_np = pointcloud[view_idx].squeeze(0).detach().cpu().numpy()
 
-        transformed_pcd_np = points_transformed[view_idx].squeeze(0).detach().cpu().numpy()
+        # transformed_pcd_np = points_transformed[view_idx].squeeze(0).detach().cpu().numpy()
         
-        point_cloud = o3d.geometry.PointCloud()
-        transformed_point_cloud = o3d.geometry.PointCloud()
-        point_cloud.points = o3d.utility.Vector3dVector(pcd_np)
-        transformed_point_cloud.points = o3d.utility.Vector3dVector(transformed_pcd_np)
+        # point_cloud = o3d.geometry.PointCloud()
+        # transformed_point_cloud = o3d.geometry.PointCloud()
+        # point_cloud.points = o3d.utility.Vector3dVector(pcd_np)
+        # transformed_point_cloud.points = o3d.utility.Vector3dVector(transformed_pcd_np)
 
-        base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
+        # base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
 
-        T_t = np.eye(4)
-        T_t[:3, :3] = tool_rot_np
-        T_t[:3, 3] = tool_pos_np
-        tool_coord = copy.deepcopy(base_coord).transform(T_t)
+        # T_t = np.eye(4)
+        # T_t[:3, :3] = tool_rot_np
+        # T_t[:3, 3] = tool_pos_np
+        # tool_coord = copy.deepcopy(base_coord).transform(T_t)
 
-        tool_end_point = o3d.geometry.TriangleMesh().create_sphere(radius=0.01)
-        farthest_pt = transformed_pcd_np[farthest_idx.detach().cpu().numpy()][view_idx]
-        T_t_p = np.eye(4)
-        T_t_p[:3, 3] = farthest_pt
-        tool_tip_position = copy.deepcopy(tool_end_point).transform(T_t_p)
-
-
-        
-
-        o3d.visualization.draw_geometries([point_cloud, transformed_point_cloud, tool_tip_position, base_coord, tool_coord],
-                                            window_name=f'point cloud')
-        
-        # TODO: 이전 github 참고해서 farthest point visualization 추가할 것no
-        ################# visualize point cloud #################
-        #########################################################
+        # tool_end_point = o3d.geometry.TriangleMesh().create_sphere(radius=0.01)
+        # farthest_pt = transformed_pcd_np[farthest_idx.detach().cpu().numpy()][view_idx]
+        # T_t_p = np.eye(4)
+        # T_t_p[:3, 3] = farthest_pt
+        # tool_tip_position = copy.deepcopy(tool_end_point).transform(T_t_p)
+        # o3d.visualization.draw_geometries([point_cloud, transformed_point_cloud, tool_tip_position, base_coord, tool_coord],
+        #                                     window_name=f'point cloud')
+        # ################# visualize point cloud #################
+        # #########################################################
 
 
         '''
@@ -447,22 +442,6 @@ class PCDReachingTargetTask(RLTask):
         robot_dof_pos = self._robots.get_joint_positions(clone=False)[:, 0:6]   # get robot dof position from 1st to 6th joint
         robot_dof_vel = self._robots.get_joint_velocities(clone=False)[:, 0:6]  # get robot dof velocity from 1st to 6th joint
         # rest of the joints are not used for control. They are fixed joints at each episode.
-        
-        # target_pos, target_rot = self._targets.get_local_poses()    # TODO: 물체의 pose는 명시적인 것이 아닌, pcd를 이용하도록 하자.
-        
-        
-        self.flange_pos = copy.deepcopy(flange_pos)
-        self.flange_rot = copy.deepcopy(flange_rot_quaternion)
-
-        if self.previous_tool_goal_distance is None:
-            self.initial_tool_goal_distance = LA.norm(self.goal_pos - self.tool_pos, ord=2, dim=1)
-            self.current_tool_goal_distance = LA.norm(self.goal_pos - self.tool_pos, ord=2, dim=1)
-            self.previous_tool_goal_distance = self.current_tool_goal_distance
-        else:
-            self.previous_tool_goal_distance = self.current_tool_goal_distance
-            self.current_tool_goal_distance = LA.norm(self.goal_pos - self.tool_pos, ord=2, dim=1)
-
-        self.current_tool_target_distance = LA.norm(self.tool_pos - self.goal_pos, ord=2, dim=1)
 
         robot_body_dof_lower_limits = self.robot_dof_lower_limits[:6]
         robot_body_dof_upper_limits = self.robot_dof_upper_limits[:6]
@@ -484,7 +463,7 @@ class PCDReachingTargetTask(RLTask):
         pointcloud: [NE, N, 3]
         '''
         self.obs_buf = torch.cat((
-                                  pointcloud.view([pointcloud.shape[0], -1]), # [NE, N*3], point cloud
+                                  points_transformed.reshape([points_transformed.shape[0], -1]), # [NE, N*3], point cloud
                                 #   self.tool_mean,                                # [NE, 3], tool position by point cloud mean   
                                   dof_pos_scaled,                               # [NE, 6]
                                 #   dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
@@ -504,7 +483,7 @@ class PCDReachingTargetTask(RLTask):
         return {self._robots.name: {"obs_buf": self.obs_buf}}
 
     def pre_physics_step(self, actions) -> None:
-        self._env.render()  # add for get point cloud on headless mode
+        # self._env.render()  # add for get point cloud on headless mode
         reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(reset_env_ids) > 0:
             self.reset_idx(reset_env_ids)
@@ -566,12 +545,15 @@ class PCDReachingTargetTask(RLTask):
         self._robots.set_joint_velocities(dof_vel, indices=indices)
 
         # reset goal
-        # goal_pos_xy_variation = torch.rand((len(env_ids), 2), device=self._device) * 0.1
-        # goal_pos_z_variation = torch.mul(torch.ones((len(env_ids), 1), device=self._device), 0.025)
-        # goal_pos_variation = torch.cat((goal_pos_xy_variation, goal_pos_z_variation), dim=1)
-        # goal_pos = torch.tensor(self._goal_position, device=self._device) + goal_pos_variation
-        goal_pos = torch.tensor(self._goal_mark, device=self._device)
-        goal_pos = goal_pos.repeat(len(env_ids), 1)
+        ## randomize goal position
+        random_rate = torch.rand((len(env_ids), 3), device=self._device)
+        coord_min = torch.tensor([self.x_min, self.y_min, self.z_min], device=self._device)
+        coord_max = torch.tensor([self.x_max, self.y_max, self.z_max], device=self._device)
+        goal_pos = coord_min + random_rate * (coord_max - coord_min)
+
+        ## constant goal position
+        # goal_pos = torch.tensor(self._goal_mark, device=self._device)
+        # goal_pos = goal_pos.repeat(len(env_ids), 1)
         self._goals.set_world_poses(goal_pos + self._env_pos[env_ids], indices=indices)
 
         # reset dummy
@@ -597,8 +579,16 @@ class PCDReachingTargetTask(RLTask):
         self.reset_idx(indices)
 
     def calculate_metrics(self) -> None:
+        if self.previous_tool_goal_distance is None:
+            self.initial_tool_goal_distance = LA.norm(self.goal_pos - self.tool_end_point, ord=2, dim=1)
+            self.current_tool_goal_distance = LA.norm(self.goal_pos - self.tool_end_point, ord=2, dim=1)
+            self.previous_tool_goal_distance = self.current_tool_goal_distance
+        else:
+            self.previous_tool_goal_distance = self.current_tool_goal_distance
+            self.current_tool_goal_distance = LA.norm(self.goal_pos - self.tool_end_point, ord=2, dim=1)
+
         init_t_g_d = self.initial_tool_goal_distance
-        cur_t_g_d = self.current_tool_target_distance
+        cur_t_g_d = self.current_tool_goal_distance
         tool_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d)
 
         self.completion_reward = torch.zeros(self._num_envs).to(self._device)
