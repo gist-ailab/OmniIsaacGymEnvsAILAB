@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from skrl.models.torch import DeterministicMixin, GaussianMixin, Model
 from omniisaacgymenvs.model.common import init_network
+from omniisaacgymenvs.model.pointnet import PointNet
 from omniisaacgymenvs.model.transformer_enc import TransformerEnc
 from omniisaacgymenvs.algos.feature_extractor import PointCloudExtractor
 from omniisaacgymenvs.model.attention import AttentionPooling
@@ -33,11 +34,16 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
                       }
         
         self.pcd_sampling_num = pcd_sampling_num
-        self.pcd_backbone = init_network(self.pcd_config, input_channels=0, output_channels=[])
+        # self.pcd_backbone = init_network(self.pcd_config, input_channels=0, output_channels=[])
+        self.pcd_backbone = PointNet()
 
         self.robot_state_num  = self.num_observations - pcd_sampling_num*3
 
-        self.net = nn.Sequential(nn.Linear(128 + self.robot_state_num, 256),    # 128 is pcd feature dimension
+        self.robot_state_mlp = nn.Sequential(nn.Linear(self.robot_state_num, 64),
+                                             nn.ReLU(),
+                                             nn.Linear(64, 64)) # comes from DexART
+
+        self.net = nn.Sequential(nn.Linear(256 + 64, 256),    # 128 is pcd feature dimension
                                  nn.ELU(),
                                  nn.Linear(256, 128),
                                  nn.ELU(),
@@ -69,9 +75,20 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
         num_of_sub_mask = self.pcd_config["num_pcd_masks"] # TODO: 외부 config에서 pcd mask 개수를 받아와야 함.
         ### 240317 added. pcd mask 개수를 꼭 cfg로 받아야 하나? 가변적일 수도 있음. 우선 reaching target task에서는 1개로 고정.
         N = self.pcd_sampling_num
-        pcd_data = inputs["states"][:, :N*3]
-        pcd_pos_data = pcd_data.view([pcd_data.shape[0], -1, 3])    # [B, 90, 3], 3 is x, y, z
-        robot_state = inputs["states"][:, N*3:]
+        pcd_data = inputs["states"][:, :N*3]    # [B, N*3]. flatten pcd data
+        pcd_pos_data = pcd_data.view([pcd_data.shape[0], -1, 3])    # [B, N, 3], 3 is x, y, z
+        robot_state = inputs["states"][:, N*3:] # B, RS
+
+        # robot state feature extractor
+        robot_state_feature = self.robot_state_mlp(robot_state)  # [B, F_RS]
+
+        # point cloud feature extractor
+        ########################################## PointNet from DexART ##########################################
+        point_feature = self.pcd_backbone(pcd_pos_data)  # [B, N, F_PCD]
+
+        combined_features = torch.cat((point_feature, robot_state_feature), dim=1)  # [B, F_PCD+F_RS]
+
+        ########################################## PointNet from DexART ##########################################
 
         # ### visualize tensorized pcd data
         # import open3d as o3d
@@ -90,45 +107,50 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
         # ### visualize tensorized pcd data
 
     
-        # [B, N, 3] => [:, 3] , 3 is x, y, z.
-        # List point clouds without distinguishing between batches and pcd instances.
-        debathed_pcd_pos = pcd_pos_data.reshape([-1, 3])
+        ########################################## PointNet2 ##########################################
+        # # [B, N, 3] => [:, 3] , 3 is x, y, z.
+        # # List point clouds without distinguishing between batches and pcd instances.
+        # debathed_pcd_pos = pcd_pos_data.reshape([-1, 3])
 
-        # get the number of environments with a shape of [0, 1, 2, ...]
-        num_of_env = torch.arange(pcd_pos_data.shape[0], device=debathed_pcd_pos.device)
+        # # get the number of environments with a shape of [0, 1, 2, ...]
+        # num_of_env = torch.arange(pcd_pos_data.shape[0], device=debathed_pcd_pos.device)
 
-        # repeat the number of environments for each point
-        batch = torch.repeat_interleave(num_of_env, N)
+        # # repeat the number of environments for each point
+        # batch = torch.repeat_interleave(num_of_env, N)
 
-        # get the point cloud feature
-        pointnet2_feature = self.pcd_backbone(None, debathed_pcd_pos, batch)  # [B, N, F]
-        point_feature = pointnet2_feature.mean(dim=1)  # [B, F]
-        # point_feature = F.adaptive_max_pool1d(pointnet2_feature.permute(0, 2, 1), 1).squeeze(2) # [B, F]
+        # # get the point cloud feature
+        # pointnet2_feature = self.pcd_backbone(None, debathed_pcd_pos, batch)  # [B, N, F]
+        # point_feature = pointnet2_feature.mean(dim=1)  # [B, F]
+        # # point_feature = F.adaptive_max_pool1d(pointnet2_feature.permute(0, 2, 1), 1).squeeze(2) # [B, F]
 
-        # # Concatenate along the third dimension
-        combined_features = torch.cat((point_feature, robot_state), dim=1)  # [B, F+RS]
+        # # # Concatenate along the third dimension
+        # combined_features = torch.cat((point_feature, robot_state), dim=1)  # [B, F+RS]
 
-        # # gloabal max pooling (Dexpoint에서 쓰는 방식 적용)
-        # # 각 feature별로 max pooling을 한다. [B, N, F] => [B, F] (왜 이렇게 했을까....?)
-        # aaa = torch.max(point_feature, dim=1)[0]
-        # bbb = aaa.view(-1, 1, aaa.shape[-1]).repeat(1, N, 1)
+        # # # gloabal max pooling (Dexpoint에서 쓰는 방식 적용)
+        # # # 각 feature별로 max pooling을 한다. [B, N, F] => [B, F] (왜 이렇게 했을까....?)
+        # # aaa = torch.max(point_feature, dim=1)[0]
+        # # bbb = aaa.view(-1, 1, aaa.shape[-1]).repeat(1, N, 1)
         
-        # # concat local feats
-        # ccc = torch.cat([point_feature, bbb], dim=-1)
+        # # # concat local feats
+        # # ccc = torch.cat([point_feature, bbb], dim=-1)
 
-        # # Output
-        # ddd = self.output_mlp(ccc)
+        # # # Output
+        # # ddd = self.output_mlp(ccc)
 
-        # # Softmax
-        # output = torch.softmax(ddd, dim=-1)
+        # # # Softmax
+        # # output = torch.softmax(ddd, dim=-1)
 
-        # # Expand and repeat the robot states to match the dimensions
-        # robot_states_expanded = robot_state.unsqueeze(1).repeat(1, N, 1)
+        # # # Expand and repeat the robot states to match the dimensions
+        # # robot_states_expanded = robot_state.unsqueeze(1).repeat(1, N, 1)
 
-        # point_features = F.adaptive_max_pool1d(point_feature.permute(0, 2, 1), 1).squeeze(2)
+        # # point_features = F.adaptive_max_pool1d(point_feature.permute(0, 2, 1), 1).squeeze(2)
 
-        # # Concatenate along the third dimension
-        # combined_features = torch.cat((point_feature, robot_states_expanded), dim=2)
+        # # # Concatenate along the third dimension
+        # # combined_features = torch.cat((point_feature, robot_states_expanded), dim=2)
+        ########################################## PointNet2 ##########################################
+
+
+
 
         if role == "policy":
             return self.mean_layer(self.net(combined_features)), self.log_std_parameter, {}
