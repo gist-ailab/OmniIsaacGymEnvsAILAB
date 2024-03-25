@@ -31,7 +31,7 @@ from typing import Optional, Tuple
 import asyncio
 
 import open3d as o3d
-import point_cloud_utils as pcu
+# import point_cloud_utils as pcu
 import copy
 
 
@@ -378,80 +378,80 @@ class PCDMovingTargetTask(RLTask):
             self.flange_pos, self.flange_rot = torch.zeros((self._num_envs, 3), device=self._device), torch.zeros((self._num_envs, 4), device=self._device)
 
 
-    def visualize_point_cloud(self, view_idx, lidar_position):
-        '''
-        args:
-            view_idx: index of the cloner
-            lidar_position: position of the lidar
-        '''
-        flange_pos, flange_rot = self._flanges.get_local_poses()
+    # def visualize_point_cloud(self, view_idx, lidar_position):
+    #     '''
+    #     args:
+    #         view_idx: index of the cloner
+    #         lidar_position: position of the lidar
+    #     '''
+    #     flange_pos, flange_rot = self._flanges.get_local_poses()
 
-        lidar_prim_path = self._point_cloud[view_idx].prim_path
-        point_cloud = self._point_cloud[view_idx]._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
-        semantic = self._point_cloud[view_idx]._lidar_sensor_interface.get_semantic_data(lidar_prim_path)
+    #     lidar_prim_path = self._point_cloud[view_idx].prim_path
+    #     point_cloud = self._point_cloud[view_idx]._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
+    #     semantic = self._point_cloud[view_idx]._lidar_sensor_interface.get_semantic_data(lidar_prim_path)
 
-        pcl_reshape = np.reshape(point_cloud, (point_cloud.shape[0]*point_cloud.shape[1], 3))
-        flange_pos_np = flange_pos[view_idx].cpu().numpy()
-        flange_ori_np = flange_rot[view_idx].cpu().numpy()
+    #     pcl_reshape = np.reshape(point_cloud, (point_cloud.shape[0]*point_cloud.shape[1], 3))
+    #     flange_pos_np = flange_pos[view_idx].cpu().numpy()
+    #     flange_ori_np = flange_rot[view_idx].cpu().numpy()
 
-        pcl_semantic = np.reshape(semantic, -1)        
-
-
-        v3d = o3d.utility.Vector3dVector
-
-        # get point cloud
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = v3d(pcl_reshape)
-
-        # get sampled point cloud
-        idx = pcu.downsample_point_cloud_poisson_disk(pcl_reshape, num_samples=int(0.2*pcl_reshape.shape[0]))
-        pcl_reshape_sampled = pcl_reshape[idx]
-        sampled_pcd = o3d.geometry.PointCloud()
-        sampled_pcd.points = v3d(pcl_reshape_sampled)
-
-        # get lidar frame. lidar frame is a world [0, 0, 0] frame
-        lidar_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.2, origin=np.array([0.0, 0.0, 0.0]))
-
-        # get base pose    
-        T_b = np.eye(4)
-        # TODO: get rotation matrix from USD
-        # R_b = lidar_coord.get_rotation_matrix_from_xyz((np.pi/6, 0, -np.pi/2))
-        R_b = lidar_coord.get_rotation_matrix_from_xyz((np.pi/9, 0, -np.pi/2))  # rotation relationship between lidar and base
-        T_b[:3, :3] = R_b
-        T_b[:3, 3] = lidar_position # acquired position from prim_path is [0,0,0]
-        T_b_inv = np.linalg.inv(T_b)
-        base_coord = copy.deepcopy(lidar_coord).transform(T_b_inv)
-        # o3d.visualization.draw_geometries([pcd, lidar_coord, base_coord])
-
-        # get ee pose
-        T_ee = np.eye(4)
-        R_ee = base_coord.get_rotation_matrix_from_quaternion(flange_ori_np)
-        T_ee[:3, :3] = R_ee
-        T_ee[:3, 3] = flange_pos_np
-        T_l_e = np.matmul(T_b_inv, T_ee)
-        flange_coord = copy.deepcopy(lidar_coord).transform(T_l_e)
-        # o3d.visualization.draw_geometries([pcd, lidar_coord, base_coord, flange_coord],
-        #                                   window_name=f'scene of env_{view_idx}')
+    #     pcl_semantic = np.reshape(semantic, -1)        
 
 
-        # print(f'env index: {view_idx}', np.unique(pcl_semantic))
+    #     v3d = o3d.utility.Vector3dVector
 
-        # 아래는 마지막 index만 가시화 (도구 가시화를 의도함)
-        # index = np.unique(pcl_semantic)[-1]
-        # print(f'show index: {index}\n')
-        # semantic = np.where(pcl_semantic==index)[0]
-        # pcd_semantic = o3d.geometry.PointCloud()
-        # pcd_semantic.points = o3d.utility.Vector3dVector(pcl_reshape[semantic])
-        # o3d.visualization.draw_geometries([pcd_semantic, lidar_coord, base_coord, flange_coord],
-        #                                     window_name=f'semantic_{index} of env_{view_idx}')
+    #     # get point cloud
+    #     pcd = o3d.geometry.PointCloud()
+    #     pcd.points = v3d(pcl_reshape)
+
+    #     # get sampled point cloud
+    #     idx = pcu.downsample_point_cloud_poisson_disk(pcl_reshape, num_samples=int(0.2*pcl_reshape.shape[0]))
+    #     pcl_reshape_sampled = pcl_reshape[idx]
+    #     sampled_pcd = o3d.geometry.PointCloud()
+    #     sampled_pcd.points = v3d(pcl_reshape_sampled)
+
+    #     # get lidar frame. lidar frame is a world [0, 0, 0] frame
+    #     lidar_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.2, origin=np.array([0.0, 0.0, 0.0]))
+
+    #     # get base pose    
+    #     T_b = np.eye(4)
+    #     # TODO: get rotation matrix from USD
+    #     # R_b = lidar_coord.get_rotation_matrix_from_xyz((np.pi/6, 0, -np.pi/2))
+    #     R_b = lidar_coord.get_rotation_matrix_from_xyz((np.pi/9, 0, -np.pi/2))  # rotation relationship between lidar and base
+    #     T_b[:3, :3] = R_b
+    #     T_b[:3, 3] = lidar_position # acquired position from prim_path is [0,0,0]
+    #     T_b_inv = np.linalg.inv(T_b)
+    #     base_coord = copy.deepcopy(lidar_coord).transform(T_b_inv)
+    #     # o3d.visualization.draw_geometries([pcd, lidar_coord, base_coord])
+
+    #     # get ee pose
+    #     T_ee = np.eye(4)
+    #     R_ee = base_coord.get_rotation_matrix_from_quaternion(flange_ori_np)
+    #     T_ee[:3, :3] = R_ee
+    #     T_ee[:3, 3] = flange_pos_np
+    #     T_l_e = np.matmul(T_b_inv, T_ee)
+    #     flange_coord = copy.deepcopy(lidar_coord).transform(T_l_e)
+    #     # o3d.visualization.draw_geometries([pcd, lidar_coord, base_coord, flange_coord],
+    #     #                                   window_name=f'scene of env_{view_idx}')
+
+
+    #     # print(f'env index: {view_idx}', np.unique(pcl_semantic))
+
+    #     # 아래는 마지막 index만 가시화 (도구 가시화를 의도함)
+    #     # index = np.unique(pcl_semantic)[-1]
+    #     # print(f'show index: {index}\n')
+    #     # semantic = np.where(pcl_semantic==index)[0]
+    #     # pcd_semantic = o3d.geometry.PointCloud()
+    #     # pcd_semantic.points = o3d.utility.Vector3dVector(pcl_reshape[semantic])
+    #     # o3d.visualization.draw_geometries([pcd_semantic, lidar_coord, base_coord, flange_coord],
+    #     #                                     window_name=f'semantic_{index} of env_{view_idx}')
         
 
-        for i in np.unique(pcl_semantic):
-            semantic = np.where(pcl_semantic==i)[0]
-            pcd_semantic = o3d.geometry.PointCloud()
-            pcd_semantic.points = o3d.utility.Vector3dVector(pcl_reshape[semantic])
-            o3d.visualization.draw_geometries([pcd_semantic, lidar_coord, base_coord, flange_coord],
-                                              window_name=f'semantic_{i} of env_{view_idx}')
+    #     for i in np.unique(pcl_semantic):
+    #         semantic = np.where(pcl_semantic==i)[0]
+    #         pcd_semantic = o3d.geometry.PointCloud()
+    #         pcd_semantic.points = o3d.utility.Vector3dVector(pcl_reshape[semantic])
+    #         o3d.visualization.draw_geometries([pcd_semantic, lidar_coord, base_coord, flange_coord],
+    #                                           window_name=f'semantic_{i} of env_{view_idx}')
 
 
     def get_observations(self) -> dict:
