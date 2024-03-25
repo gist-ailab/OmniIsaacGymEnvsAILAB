@@ -32,6 +32,7 @@ device = env.device
 
 # instantiate a memory as rollout buffer (any memory can be used for this)
 memory = RandomMemory(memory_size=16, num_envs=env.num_envs, device=device)
+# memory = RandomMemory(memory_size=8, num_envs=env.num_envs, device=device)  # mini_batches 크기와 맞춰야 post-interaction에서 에러가 안난다.
 
 
 # instantiate the agent's models (function approximators).
@@ -39,7 +40,10 @@ memory = RandomMemory(memory_size=16, num_envs=env.num_envs, device=device)
 # https://skrl.readthedocs.io/en/latest/api/agents/ppo.html#models
 models = {}
 # models["policy"] = SharedTransformerEnc(env.observation_space, env.action_space, env.num_envs, device)
-models["policy"] = Shared(env.observation_space, env.action_space, device)
+models["policy"] = Shared(env.observation_space,
+                          env.action_space,
+                          device,
+                          pcd_sampling_num=env._env.task._pcd_sampling_num,) # pcd mask 개수도 비슷한 방식으로 받아올 수 있다.
 models["value"] = models["policy"]  # same instance: shared model
 
 
@@ -48,7 +52,9 @@ models["value"] = models["policy"]  # same instance: shared model
 cfg = PPO_DEFAULT_CONFIG.copy()
 cfg["rollouts"] = 16  # memory_size
 cfg["learning_epochs"] = 8
+# cfg["learning_epochs"] = 16
 cfg["mini_batches"] = 8  # 16 * 4096 / 8192
+# cfg["mini_batches"] = 16  # 16 * 4096 / 8192
 cfg["discount_factor"] = 0.99
 cfg["lambda"] = 0.95
 cfg["learning_rate"] = 5e-4
@@ -71,10 +77,10 @@ https://skrl.readthedocs.io/en/develop/intro/getting_started.html#preprocessors
 Preprocessor가 필요할 경우, 위의 `RunningStandardScaler`를 참고하여 pcd에 대한 preprocessor을 수행해봐도 될 것 같다.
 현재 observation space를 1차원으로 줄여서 아래 preprocessor를 사용해도 될듯? 방식은 한번 알아보자 
 '''
-# cfg["state_preprocessor"] = RunningStandardScaler
-# cfg["state_preprocessor_kwargs"] = {"size": env.observation_space, "device": device}
-# cfg["value_preprocessor"] = RunningStandardScaler
-# cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
+cfg["state_preprocessor"] = RunningStandardScaler
+cfg["state_preprocessor_kwargs"] = {"size": env.observation_space, "device": device}
+cfg["value_preprocessor"] = RunningStandardScaler
+cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
 
 # logging to TensorBoard and write checkpoints (in timesteps)
 cfg["experiment"]["write_interval"] = 150
@@ -82,9 +88,10 @@ cfg["experiment"]["checkpoint_interval"] = 200
 
 now = datetime.now()
 formatted_date = now.strftime("%y%m%d_%H%M%S")
-cfg["experiment"]["experiment_name"] = f"{formatted_date}_PCD_mean_Fixed_Point_0.7_0.5_0.4"
+cfg["experiment"]["experiment_name"] = f"{formatted_date}_Reaching_Target_Simple_Shared"
+# cfg["experiment"]["experiment_name"] = f"dummy"
 
-cfg["experiment"]["directory"] = "runs/torch/Reaching_Target_PCD"
+cfg["experiment"]["directory"] = "./runs/torch/Reaching_Target_PCD"
 
 agent = PPO(models=models,
             memory=memory,
@@ -108,7 +115,7 @@ trainer.train()
 
 # # download the trained agent's checkpoint from Hugging Face Hub and load it
 # # path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-FrankaCabinet-PPO", filename="agent.pt")
-# path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/Reaching_Target_PCD/240303_230503_PCD_mean_Fixed_Point_0.7_0.5_0.4/checkpoints/best_agent.pt'
+# path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/Reaching_Target_PCD/240324_233841_Reaching_Target_Simple_Shared/checkpoints/agent_5400.pt'
 # agent.load(path)
 
 # # start evaluation
