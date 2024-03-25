@@ -20,7 +20,6 @@ import os
 import open3d as o3d
 import open3d.core as o3c
 import numpy as np
-import point_cloud_utils as pcu
 import copy
 
 class PointcloudWriter(Writer):
