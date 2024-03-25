@@ -32,7 +32,6 @@ import asyncio
 
 import open3d as o3d
 import open3d.core as o3c
-import point_cloud_utils as pcu
 import pytorch3d
 from pytorch3d.transforms import quaternion_to_matrix
 
@@ -62,7 +61,12 @@ class PCDReachingTargetTask(RLTask):
         self.dt = 1 / 120.0
         self._env = env      
 
-        self.previous_tool_goal_distance = None
+        # self.previous_tool_goal_distance = torch.tensor(1000.0).to(self.cfg["rl_device"])
+        # self.previous_tool_goal_distance = self.previous_tool_goal_distance.expand(self._num_envs)
+        # self.previous_tool_goal_distance = torch.tensor([1000.0]).repeat(self._num_envs).to(self.cfg["rl_device"])
+        self.initial_tool_goal_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
+
+        # sim_config.task_config['env']['numEnvs']
         self.current_tool_goal_distance = None
         self.previous_tool_position = None
         self.current_tool_position = None
@@ -88,13 +92,13 @@ class PCDReachingTargetTask(RLTask):
         self.y_min = -0.6
         self.y_max = 0.6
         self.z_min = 0.1
-        self.z_max = 0.6
+        self.z_max = 0.7
 
         self._pcd_sampling_num = self._task_cfg["sim"]["point_cloud_samples"]
         self._num_pcd_masks = 1
 
         # get tool point cloud from ply and convert it to torch tensor
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device(self.cfg["rl_device"])
         tool_o3d_pcd = o3d.io.read_point_cloud("/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/tool.ply")
         o3d_downsampled_pcd = tool_o3d_pcd.farthest_point_down_sample(self._pcd_sampling_num)
         downsampled_points = np.array(o3d_downsampled_pcd.points)
@@ -324,7 +328,7 @@ class PCDReachingTargetTask(RLTask):
     def get_goal(self):
         goal = DynamicSphere(prim_path=self.default_zero_env_path + "/goal",
                              name="goal",
-                             radius=0.015,
+                             radius=0.04,
                              color=torch.tensor([0, 255, 0]))
         # goal.disable_rigid_body_physics()
         self._sim_config.apply_articulation_settings("goal",
@@ -402,13 +406,13 @@ class PCDReachingTargetTask(RLTask):
         # tool_pos_np = tool_pos[view_idx].cpu().numpy()
         # tool_rot_np = tool_rot[view_idx].cpu().numpy()
 
-        # pcd_np = pointcloud[view_idx].squeeze(0).detach().cpu().numpy()
+        # # pcd_np = pointcloud[view_idx].squeeze(0).detach().cpu().numpy()
 
         # transformed_pcd_np = points_transformed[view_idx].squeeze(0).detach().cpu().numpy()
         
         # point_cloud = o3d.geometry.PointCloud()
         # transformed_point_cloud = o3d.geometry.PointCloud()
-        # point_cloud.points = o3d.utility.Vector3dVector(pcd_np)
+        # # point_cloud.points = o3d.utility.Vector3dVector(pcd_np)
         # transformed_point_cloud.points = o3d.utility.Vector3dVector(transformed_pcd_np)
 
         # base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
@@ -496,7 +500,7 @@ class PCDReachingTargetTask(RLTask):
 
         elif self._control_space == "cartesian":
             # goal_position = self.flange_pos + actions / 100.0
-            goal_position = self.flange_pos + self.actions[:, :3] / 10.0
+            goal_position = self.flange_pos + self.actions[:, :3] / 50.0
             goal_orientation = self.flange_rot + self.actions[:, 3:] / 70.0
 
             delta_dof_pos = omniverse_isaacgym_utils.ik(
@@ -545,19 +549,23 @@ class PCDReachingTargetTask(RLTask):
         self._robots.set_joint_velocities(dof_vel, indices=indices)
 
         # reset goal
-        ## randomize goal position
-        random_rate = torch.rand((len(env_ids), 3), device=self._device)
-        coord_min = torch.tensor([self.x_min, self.y_min, self.z_min], device=self._device)
-        coord_max = torch.tensor([self.x_max, self.y_max, self.z_max], device=self._device)
-        goal_pos = coord_min + random_rate * (coord_max - coord_min)
+        # ## randomize goal position
+        # random_rate = torch.rand((len(env_ids), 3), device=self._device)
+        # coord_min = torch.tensor([self.x_min, self.y_min, self.z_min], device=self._device)
+        # coord_max = torch.tensor([self.x_max, self.y_max, self.z_max], device=self._device)
+        # goal_pos = coord_min + random_rate * (coord_max - coord_min)
 
         ## constant goal position
-        # goal_pos = torch.tensor(self._goal_mark, device=self._device)
-        # goal_pos = goal_pos.repeat(len(env_ids), 1)
+        goal_pos = torch.tensor(self._goal_mark, device=self._device)
+        goal_pos = goal_pos.repeat(len(env_ids), 1)
+
         self._goals.set_world_poses(goal_pos + self._env_pos[env_ids], indices=indices)
 
-        # reset dummy
-        # self._dummy.set_world_poses()
+        # self.previous_tool_goal_distance = self.previous_tool_goal_distance.clone()
+        # self.previous_tool_goal_distance[[indices]] = 1000.0
+
+        # if self.previous_tool_goal_distance > 999:
+        #     self.previous_tool_goal_distance[env_ids] = None
 
         # bookkeeping
         self.reset_buf[env_ids] = 0
@@ -579,20 +587,16 @@ class PCDReachingTargetTask(RLTask):
         self.reset_idx(indices)
 
     def calculate_metrics(self) -> None:
-        if self.previous_tool_goal_distance is None:
-            self.initial_tool_goal_distance = LA.norm(self.goal_pos - self.tool_end_point, ord=2, dim=1)
-            self.current_tool_goal_distance = LA.norm(self.goal_pos - self.tool_end_point, ord=2, dim=1)
-            self.previous_tool_goal_distance = self.current_tool_goal_distance
-        else:
-            self.previous_tool_goal_distance = self.current_tool_goal_distance
-            self.current_tool_goal_distance = LA.norm(self.goal_pos - self.tool_end_point, ord=2, dim=1)
+        initialized_idx = self.progress_buf == 1
+        self.current_tool_goal_distance = LA.norm(self.goal_pos - self.tool_end_point, ord=2, dim=1)
+        self.initial_tool_goal_distance[initialized_idx] = self.current_tool_goal_distance[initialized_idx]
 
         init_t_g_d = self.initial_tool_goal_distance
         cur_t_g_d = self.current_tool_goal_distance
         tool_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d)
 
         self.completion_reward = torch.zeros(self._num_envs).to(self._device)
-        self.completion_reward[self.current_tool_goal_distance<0.035] = 10
+        self.completion_reward[self.current_tool_goal_distance<0.055] = 10.0
         self.rew_buf[:] = tool_goal_distance_reward + self.completion_reward
 
 
@@ -610,7 +614,7 @@ class PCDReachingTargetTask(RLTask):
 
 
         # target reached
-        reset = torch.where(self.current_tool_goal_distance <= 0.03, ones, reset)
+        reset = torch.where(self.current_tool_goal_distance <= 0.05, ones, reset)
         
         # max episode length
         self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, ones, reset)
