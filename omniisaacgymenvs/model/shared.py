@@ -37,18 +37,22 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
         # self.pcd_backbone = init_network(self.pcd_config, input_channels=0, output_channels=[])
         self.pcd_backbone = PointNet()
 
-        self.robot_state_num  = self.num_observations - pcd_sampling_num*3
+        self.robot_state_num  = self.num_observations - pcd_sampling_num*3 - 3 # 3 is goal pos
 
         self.robot_state_mlp = nn.Sequential(nn.Linear(self.robot_state_num, 64),
                                              nn.ReLU(),
                                              nn.Linear(64, 64)) # comes from DexART
 
-        self.net = nn.Sequential(nn.Linear(256 + 64, 256),    # 128 is pcd feature dimension
+        # self.net = nn.Sequential(nn.Linear(256 + 64 + 3, 256),  # 256: pcd feature, 64: robot state feat, 3: goal pos
+        #                          nn.ELU(),
+        #                          nn.Linear(256, 128),
+        #                          nn.ELU(),
+        #                          nn.Linear(128, 64),
+        #                          nn.ELU())
+        
+        self.net = nn.Sequential(nn.Linear(256 + 64 + 3, 64),  # 256: pcd feature, 64: robot state feat, 3: goal pos
                                  nn.ELU(),
-                                 nn.Linear(256, 128),
-                                 nn.ELU(),
-                                 nn.Linear(128, 64),
-                                 nn.ELU())
+                                 nn.Linear(64, 64),)
 
         self.mean_layer = nn.Linear(64, self.num_actions)
         self.log_std_parameter = nn.Parameter(torch.zeros(self.num_actions))
@@ -74,10 +78,12 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
         '''
         num_of_sub_mask = self.pcd_config["num_pcd_masks"] # TODO: 외부 config에서 pcd mask 개수를 받아와야 함.
         ### 240317 added. pcd mask 개수를 꼭 cfg로 받아야 하나? 가변적일 수도 있음. 우선 reaching target task에서는 1개로 고정.
+        # TODO: goal pos는 robot state에 넣지 말고 combined features에 바로 붙여주자.
         N = self.pcd_sampling_num
         pcd_data = inputs["states"][:, :N*3]    # [B, N*3]. flatten pcd data
         pcd_pos_data = pcd_data.view([pcd_data.shape[0], -1, 3])    # [B, N, 3], 3 is x, y, z
-        robot_state = inputs["states"][:, N*3:] # B, RS
+        robot_state = inputs["states"][:, N*3:-3] # B, RS
+        goal_pos = inputs["states"][:, -3:] # B, 3
 
         # robot state feature extractor
         robot_state_feature = self.robot_state_mlp(robot_state)  # [B, F_RS]
@@ -86,7 +92,7 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
         ########################################## PointNet from DexART ##########################################
         point_feature = self.pcd_backbone(pcd_pos_data)  # [B, N, F_PCD]
 
-        combined_features = torch.cat((point_feature, robot_state_feature), dim=1)  # [B, F_PCD+F_RS]
+        combined_features = torch.cat((point_feature, robot_state_feature, goal_pos), dim=1)  # [B, F_PCD+F_RS+3]
 
         ########################################## PointNet from DexART ##########################################
 
