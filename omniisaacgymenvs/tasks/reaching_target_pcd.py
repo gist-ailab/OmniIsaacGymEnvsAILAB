@@ -264,7 +264,7 @@ class PCDReachingTargetTask(RLTask):
         #                                   device=self.device,
         #                                   )
         # self.pointcloud_writer.attach(self.render_products)
-        ################################################################################## 231121 added BSH
+        ################################################################################# 231121 added BSH
             
         # # get robot semantic data
         # # 그런데 어짜피 로봇 point cloud는 필요 없기 때문에 안 받아도 될듯
@@ -400,19 +400,18 @@ class PCDReachingTargetTask(RLTask):
         self.tool_end_point = points_transformed.gather(1, farthest_idx.view(B, 1, 1).expand(B, 1, 3)).squeeze(1).squeeze(1)  # [B, 3]
 
 
-        # #########################################################
-        # ################# visualize point cloud #################
+        ##################### ####################################
+        ################# visualize point cloud #################
         # view_idx = 0
         # tool_pos_np = tool_pos[view_idx].cpu().numpy()
         # tool_rot_np = tool_rot[view_idx].cpu().numpy()
 
-        # # pcd_np = pointcloud[view_idx].squeeze(0).detach().cpu().numpy()
-
-        # transformed_pcd_np = points_transformed[view_idx].squeeze(0).detach().cpu().numpy()
-        
+        # pcd_np = pointcloud[view_idx].squeeze(0).detach().cpu().numpy()
         # point_cloud = o3d.geometry.PointCloud()
+        # point_cloud.points = o3d.utility.Vector3dVector(pcd_np)
+        
+        # transformed_pcd_np = points_transformed[view_idx].squeeze(0).detach().cpu().numpy()
         # transformed_point_cloud = o3d.geometry.PointCloud()
-        # # point_cloud.points = o3d.utility.Vector3dVector(pcd_np)
         # transformed_point_cloud.points = o3d.utility.Vector3dVector(transformed_pcd_np)
 
         # base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
@@ -423,14 +422,22 @@ class PCDReachingTargetTask(RLTask):
         # tool_coord = copy.deepcopy(base_coord).transform(T_t)
 
         # tool_end_point = o3d.geometry.TriangleMesh().create_sphere(radius=0.01)
+        # tool_end_point.paint_uniform_color([0, 0, 1])
         # farthest_pt = transformed_pcd_np[farthest_idx.detach().cpu().numpy()][view_idx]
         # T_t_p = np.eye(4)
         # T_t_p[:3, 3] = farthest_pt
         # tool_tip_position = copy.deepcopy(tool_end_point).transform(T_t_p)
-        # o3d.visualization.draw_geometries([point_cloud, transformed_point_cloud, tool_tip_position, base_coord, tool_coord],
+
+        # goal_pos_np = self.goal_pos[view_idx].cpu().numpy()
+        # goal_cone = o3d.geometry.TriangleMesh.create_cone(radius=0.01, height=0.03)
+        # goal_cone.paint_uniform_color([1, 0, 0])
+        # T_g_p = np.eye(4)
+        # T_g_p[:3, 3] = goal_pos_np
+        # goal_position = copy.deepcopy(goal_cone).transform(T_g_p)
+        # o3d.visualization.draw_geometries([point_cloud, transformed_point_cloud, tool_tip_position, goal_position, base_coord, tool_coord],
         #                                     window_name=f'point cloud')
-        # ################# visualize point cloud #################
-        # #########################################################
+        ################# visualize point cloud #################
+        #########################################################
 
 
         '''
@@ -596,8 +603,9 @@ class PCDReachingTargetTask(RLTask):
         tool_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d)
 
         self.completion_reward = torch.zeros(self._num_envs).to(self._device)
-        self.completion_reward[self.current_tool_goal_distance<0.055] = 10.0
+        self.completion_reward[self.current_tool_goal_distance <= 0.05] = 10.0
         self.rew_buf[:] = tool_goal_distance_reward + self.completion_reward
+        self.rew_buf[:] = tool_goal_distance_reward
 
 
     def is_done(self) -> None:
@@ -614,7 +622,7 @@ class PCDReachingTargetTask(RLTask):
 
 
         # target reached
-        reset = torch.where(self.current_tool_goal_distance <= 0.05, ones, reset)
+        reset = torch.where(self.current_tool_goal_distance < 0.05, ones, reset)
         
         # max episode length
         self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, ones, reset)
