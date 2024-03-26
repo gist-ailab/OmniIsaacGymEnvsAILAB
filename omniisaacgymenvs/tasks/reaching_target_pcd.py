@@ -602,9 +602,9 @@ class PCDReachingTargetTask(RLTask):
         cur_t_g_d = self.current_tool_goal_distance
         tool_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d)
 
-        self.completion_reward = torch.zeros(self._num_envs).to(self._device)
-        self.completion_reward[self.current_tool_goal_distance <= 0.05] = 10.0
-        self.rew_buf[:] = tool_goal_distance_reward + self.completion_reward
+        # self.completion_reward = torch.zeros(self._num_envs).to(self._device)
+        # self.completion_reward[self.current_tool_goal_distance <= 0.05] = 10.0
+        # self.rew_buf[:] = tool_goal_distance_reward + self.completion_reward
         self.rew_buf[:] = tool_goal_distance_reward
 
 
