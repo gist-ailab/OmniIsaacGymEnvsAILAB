@@ -62,41 +62,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 render_products = []
 
 # Load usd object
-usd_file = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/tool.usd"
-prim_path = "/World/tool"    # power_drill 앞에 숫자가 오면 안된다. 숫자가 있으면 오류남
-# usd_file = "/home/bak/Documents/project_proposal/035_power_drill/35_power_drill.usd"
-# prim_path = "/World/power_drill"    # power_drill 앞에 숫자가 오면 안된다. 숫자가 있으면 오류남
-# add_reference_to_stage(usd_path=usd_file, prim_path=prim_path)
-# obj = my_world.scene.add(prim_path)
-
-# stage_utils.get_current_stage().DefinePrim("/World/Xform/", "Xform")
-# stage_utils.get_current_stage().DefinePrim(prim_path, "Xform")
-# prims_utils.create_prim(prim_path=prim_path,
-#                         prim_type="Xform",
-#                         usd_path=usd_file)
-
-# object_prim = create_prim(
-#                             usd_path=usd_file,
-#                             prim_path=prim_path,
-#                             # position=[0, 0, 0],
-#                             # scale=[1.5, 1.5, 1.5]
-#                         )
-
-# obj = RigidPrim(prim_path=prim_path,
-#                 name="power_drill",
-#                 position=[0, 0, 0],
-#                 scale=[1.5, 1.5, 1.5],
-#                 )
-# _obj = RigidPrimView(prim_paths_expr=prim_path,
-#                      name="power_drill_view",
-#                      reset_xform_properties=False,
-#                      )
-
-# scene.add(_obj)
-
-# world.scene.add()
-
-
+# usd_file = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/tool.usd"
+# prim_path = "/World/tool"    # power_drill 앞에 숫자가 오면 안된다. 숫자가 있으면 오류남
+usd_file = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/cylinder/cylinder.usd"
+prim_path = "/World/cylinder"
 
 with rep.new_layer():
 
@@ -106,17 +75,6 @@ with rep.new_layer():
     add_reference_to_stage(usd_path=usd_file, prim_path=prim_path)
     obj_prim_path = get_prim_at_path(prim_path)
     simulation_app.update()
-    # obj = RigidPrim(prim_path=prim_path,
-    #             name="power_drill",
-    #             position=[0, 0, 0.5],
-    #             scale=[1.5, 1.5, 1.5],
-    #             )
-    # _obj = RigidPrimView(prim_paths_expr=prim_path,
-    #                     name="power_drill_view",
-    #                     reset_xform_properties=False,
-    #                     )
-
-    # scene.add(_obj)
 
     for i in range(len(camera_positions)):
         locals()[f"camera{i}"] = rep.create.camera(
@@ -125,22 +83,14 @@ with rep.new_layer():
                                                    rotation=camera_rotations[i],
                                                    name=f"camera{i}"
                                                    )
-        # locals()[f"camera{i}"] = rep.create.camera(position=camera_positions[i],
-        #                                            rotation=camera_rotations[i],
-        #                                            )
         render_product = rep.create.render_product(locals()[f"camera{i}"],
                                                    resolution=(camera_width, camera_height))
         render_products.append(render_product)
-
-
 
     rep.create.from_usd(usd_file, prim_path)
 
     rep.orchestrator._orchestrator._is_started = True
     simulation_app.update()
-
-
-
 
 # initialize pytorch writer for vectorized collection
 pointcloud_listener = PointcloudListener()
