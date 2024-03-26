@@ -17,23 +17,19 @@ from omni.isaac.core.utils.semantics import add_update_semantics
 
 import omni
 from omni.isaac.core.prims import RigidPrimView
-from omni.isaac.core.objects import DynamicCylinder, DynamicSphere, DynamicCuboid
-# from omni.isaac.core.materials import PhysicsMaterial
-# from omni.isaac.core.utils.string import find_unique_string_name
+from omni.isaac.core.objects import DynamicCylinder, DynamicCone, DynamicSphere, DynamicCuboid
 from omni.isaac.core.utils.prims import get_prim_at_path, is_prim_path_valid
-# from omni.isaac.sensor import Camera, LidarRtx, RotatingLidarPhysX
-from omni.kit.viewport.utility import get_active_viewport
+from omni.isaac.core.materials.physics_material import PhysicsMaterial
 
 from skrl.utils import omniverse_isaacgym_utils
 from pxr import Usd, UsdGeom, Gf, UsdPhysics, Semantics              # pxr usd imports used to create cube
+from pytorch3d.transforms import quaternion_to_matrix
 
 from typing import Optional, Tuple
-import asyncio
 
 import open3d as o3d
-# import point_cloud_utils as pcu
-import copy
 
+import copy
 
 # post_physics_step calls
 # - get_observations()
@@ -41,7 +37,6 @@ import copy
 # - calculate_metrics()
 # - is_done()
 # - get_extras()    
-
 
 
 class PCDMovingTargetTask(RLTask):
@@ -56,7 +51,9 @@ class PCDMovingTargetTask(RLTask):
 
         self.step_num = 0
         self.dt = 1 / 120.0
-        self._env = env      
+        self._env = env
+        
+        self.initial_tool_goal_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
 
         self.previous_tool_target_distance = None
         self.current_tool_target_distance = None
@@ -71,32 +68,62 @@ class PCDMovingTargetTask(RLTask):
         self.gamma = 0
         self.zeta = 0.1
         self.eta = 0.25
-        self.punishment = -1
+        self.relu = torch.nn.ReLU()
 
-        self.stage = omni.usd.get_context().get_stage()        
+        self.stage = omni.usd.get_context().get_stage()
+
+        # tool orientation
+        self.tool_rot_x = 1.221 # 70 degree
+        self.tool_rot_z = 0     # 0 degree
+        self.tool_rot_y = -1.5707 # -90 degree
+
+        # workspace 2D boundary
+        self.x_min = 0.45
+        self.x_max = 1.2
+        self.y_min = -0.8
+        self.y_max = 0.4
 
         self._pcd_sampling_num = self._task_cfg["sim"]["point_cloud_samples"]
-        self._num_pcd_masks = 2
+        self._num_pcd_masks = 2 # tool and target
+        # TODO: point cloud의 sub mask 개수를 state 또는 config에서 받아올 것.
+
+        # get tool point cloud from ply and convert it to torch tensor
+        device = torch.device(self.cfg["rl_device"])
+        tool_o3d_pcd = o3d.io.read_point_cloud("/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/tool.ply")
+        o3d_downsampled_pcd = tool_o3d_pcd.farthest_point_down_sample(self._pcd_sampling_num)
+        downsampled_points = np.array(o3d_downsampled_pcd.points)
+        tool_pcd = torch.from_numpy(downsampled_points).to(device)
+        self.tool_pcd = tool_pcd.unsqueeze(0).repeat(self._num_envs, 1, 1)
+        self.tool_pcd = self.tool_pcd.float()
+
+        # TODO: cylinder 추가
+        # TODO: 왠지 처음 tool 나올 때, 로봇이 바닥에 처박혀있는 것 같은데 로봇 팔이 더 위에서 시작하도록 수정
+        target_o3d_pcd = o3d.io.read_point_cloud("/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/cylinder/cylinder.ply")
+        o3d_downsampled_pcd = tool_o3d_pcd.farthest_point_down_sample(self._pcd_sampling_num)
+        downsampled_points = np.array(o3d_downsampled_pcd.points)
+        target_pcd = torch.from_numpy(downsampled_points).to(device)
+        self.target_pcd = target_pcd.unsqueeze(0).repeat(self._num_envs, 1, 1)
+        self.target_pcd = self.target_pcd.float()
+
         
         # observation and action space
         pcd_observations = self._pcd_sampling_num * self._num_pcd_masks * 3     # 2 is a number of point cloud masks and 3 is a cartesian coordinate
-        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 3 + 3
+        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 3
         '''
         refer to observations in get_observations()
+        pcd_observations                              # [NE, 3*2*pcd_sampling_num]
         dof_pos_scaled,                               # [NE, 6]
         dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
         flange_pos,                                   # [NE, 3]
         flange_rot,                                   # [NE, 4]
-        target_pos,                                   # [NE, 3]
         goal_pos,                                     # [NE, 3]
         
         '''
-        # TODO: point cloud의 sub mask 개수를 state 또는 config에서 받아올 것.
 
         if self._control_space == "joint":
             self._num_actions = 6
         elif self._control_space == "cartesian":
-            self._num_actions = 3
+            self._num_actions = 7   # 3 for position, 4 for rotation(quaternion)
         else:
             raise ValueError("Invalid control space: {}".format(self._control_space))
 
@@ -131,8 +158,10 @@ class PCDMovingTargetTask(RLTask):
         self._dof_vel_scale = self._task_cfg["env"]["dofVelocityScale"]
 
         self._control_space = self._task_cfg["env"]["controlSpace"]
-        self._goal_position = self._task_cfg["env"]["goal"]
+        self._goal_mark = self._task_cfg["env"]["goal"]
+        self._target_position = self._task_cfg["env"]["target"]
         self._pcd_normalization = self._task_cfg["sim"]["point_cloud_normalization"]
+
 
         
     def set_up_scene(self, scene) -> None:
@@ -148,23 +177,29 @@ class PCDMovingTargetTask(RLTask):
         self._robots = UR5eView(prim_paths_expr="/World/envs/.*/robot", name="robot_view")
         # flanges view
         self._flanges = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/{self._flange_link}", name="end_effector_view")
+        # tool view
+        self._tools = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/tool", name="tool_view")        
         # target view
         self._targets = RigidPrimView(prim_paths_expr="/World/envs/.*/target", name="target_view", reset_xform_properties=False)        
         # goal view
         self._goals = RigidPrimView(prim_paths_expr="/World/envs/.*/goal", name="goal_view", reset_xform_properties=False)
+        self._goals._non_root_link = True   # do not set states for kinematics
 
-        scene.add(self._goals)
         scene.add(self._robots)
         scene.add(self._flanges)
+        scene.add(self._tools)
         scene.add(self._targets)
+        scene.add(self._goals)
         
         
         # point cloud view
         self.render_products = []
-        camera_positions = {0: [2, 1.5, 0.5],
+        camera_positions = {0: [1.5, 1.5, 0.5],
                             1: [2, -1.3, 0.5],
-                            2: [-1.5, -2.2, 0.5]}
-        camera_rotations = {0: [0, -10, 60],
+                            2: [-0.5, -1.2, 0.5]}
+                            # 2: [-1.5, -2.2, 0.5]}
+                            # 2: [-4.8, -6.1, 0.5]}
+        camera_rotations = {0: [0, -10, 50],
                             1: [0, -10, -45],
                             2: [0, -10, -130]}
         env_pos = self._env_pos.cpu()
@@ -208,41 +243,17 @@ class PCDMovingTargetTask(RLTask):
                                                                  rotation=(camera_rotations[j][0],
                                                                            camera_rotations[j][1],
                                                                            camera_rotations[j][2]), 
-                                                                 focal_length=1.8,
-                                                                 focus_distance=3.86,
-                                                                 horizontal_aperture=2.24,
+                                                                 focal_length=18.0,
+                                                                 focus_distance=400,
+                                                                 horizontal_aperture=20.955,
                                                                  # vertical_aperture=0.2016,
                                                                  # clipping_range=(0.5, 3.86),
-                                                                 clipping_range=(0.5, 3),
+                                                                 clipping_range=(0.01, 3),
                                                                  # TODO: clipping range 조절해서 환경이 서로 안 겹치게 하자.
                                                                  )
                 
                 render_product = self.rep.create.render_product(locals()[f"camera_{j}"], resolution=(self.camera_width, self.camera_height))
                 self.render_products.append(render_product)
-
-            # camera_position = (2 + env_pos[i][0], 1.5 + env_pos[i][1], 0.5)
-            # self.camera_positions[i] = camera_position
-            # self.camera_1_orientations = (0, -10, 60)
-            # # self.camera_orientations = (0, 0, 60)
-            # camera = self.rep.create.camera(
-            #     # position=(0.5 + env_pos[i][0], 1.5 + env_pos[i][1], 0.4),
-            #     # position=(2 + env_pos[i][0], 1.5 + env_pos[i][1], 0.5),
-            #     position=self.camera_positions,
-            #     rotation=self.camera_orientations,
-
-            #     focal_length=1.8,
-            #     focus_distance=3.86,
-            #     horizontal_aperture=2.24,
-            #     # vertical_aperture=0.2016,
-            #     clipping_range=(0.5, 3.86),
-                
-            #     )
-            # render_product = self.rep.create.render_product(camera, resolution=(self.camera_width, self.camera_height))
-            # distance_to_camera = self.rep.AnnotatorRegistry.get_annotator("distance_to_camera")
-            # distance_to_image_plane = self.rep.AnnotatorRegistry.get_annotator("distance_to_image_plane")
-            # pointcloud = self.rep.AnnotatorRegistry.get_annotator("pointcloud")
-
-            # self.render_products.append(render_product)
 
         # start replicator to capture image data
         self.rep.orchestrator._orchestrator._is_started = True
@@ -259,7 +270,6 @@ class PCDMovingTargetTask(RLTask):
                                           device=self.device,
                                           )
         self.pointcloud_writer.attach(self.render_products)
-        ################################################################################## 231121 added BSH
             
         # # get robot semantic data
         # # 그런데 어짜피 로봇 point cloud는 필요 없기 때문에 안 받아도 될듯
@@ -272,7 +282,6 @@ class PCDMovingTargetTask(RLTask):
         #     self._robot_semantics[i].GetSemanticTypeAttr().Set("class")
         #     self._robot_semantics[i].GetSemanticDataAttr().Set(f"robot_{i}")
         #     add_update_semantics(robot_prim, '0')
-
 
         # get tool semantic data
         self._tool_semantics = {}
@@ -305,6 +314,8 @@ class PCDMovingTargetTask(RLTask):
             scene.remove("robot_view", registry_only=True)
         if scene.object_exist("end_effector_view"):
             scene.remove("end_effector_view", registry_only=True)
+        if scene.object_exist("tool_view"):
+            scene.remove("tool_view", registry_only=True)
         if scene.object_exist("target_view"):
             scene.remove("target_view", registry_only=True)
         if scene.object_exist("goal_view"):
@@ -312,11 +323,13 @@ class PCDMovingTargetTask(RLTask):
 
         self._robots = UR5eView(prim_paths_expr="/World/envs/.*/robot", name="robot_view")
         self._flanges = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/{self._flange_link}", name="end_effector_view")
+        self._tools = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/tool", name="tool_view")
         self._targets = RigidPrimView(prim_paths_expr="/World/envs/.*/target", name="target_view", reset_xform_properties=False)
         self._goals = RigidPrimView(prim_paths_expr="/World/envs/.*/goal", name="goal_view", reset_xform_properties=False)
 
         scene.add(self._robots)
         scene.add(self._flanges)
+        scene.add(self._tools)
         scene.add(self._targets)
         scene.add(self._goals)
         
@@ -332,33 +345,42 @@ class PCDMovingTargetTask(RLTask):
                                                      self._sim_config.parse_actor_config("robot"))
 
     def get_target(self):
-        target = DynamicCuboid(prim_path=self.default_zero_env_path + "/target",
-                               name="target",
-                               size=0.07,
-                               density=1,
-                               color=torch.tensor([255, 0, 0]),
-                            #    physics_material=PhysicsMaterial(prim_path=physics_material_path,
-                            #                                     static_friction=0.1, dynamic_friction=0.1),
-                               )
+        target = DynamicCylinder(prim_path=self.default_zero_env_path + "/target",
+                                 name="target",
+                                 radius=0.04,
+                                 height=0.05,
+                                 density=1,
+                                 color=torch.tensor([255, 0, 0]),
+                                 mass=1,
+                                #  physics_material=PhysicsMaterial(
+                                #                                   prim_path="/World/physics_materials/target_material",
+                                #                                   static_friction=0.05, dynamic_friction=0.6)
+                                 physics_material=PhysicsMaterial(
+                                                                  prim_path="/World/physics_materials/target_material",
+                                                                  static_friction=0.02, dynamic_friction=0.3)
+                                 )
         
         self._sim_config.apply_articulation_settings("target",
                                                      get_prim_at_path(target.prim_path),
                                                      self._sim_config.parse_actor_config("target"))
 
     def get_goal(self):
-        goal = DynamicSphere(prim_path=self.default_zero_env_path + "/goal",
-                             name="goal",
-                             radius=0.025,
-                             color=torch.tensor([0, 255, 0]))
-        # goal.disable_rigid_body_physics()
+        goal = DynamicCone(prim_path=self.default_zero_env_path + "/goal",
+                          name="goal",
+                          radius=0.015,
+                          height=0.03,
+                          color=torch.tensor([0, 255, 0]))
         self._sim_config.apply_articulation_settings("goal",
                                                      get_prim_at_path(goal.prim_path),
                                                      self._sim_config.parse_actor_config("goal"))
+        goal.set_collision_enabled(False)
         
 
     def init_data(self) -> None:
-        self.robot_default_dof_pos = torch.tensor(np.radians([-40, -45, 60, -100, -90, 90.0,
-                                                              0.0, 0.0, 0.0, 0.0]), device=self._device, dtype=torch.float32)
+        # self.robot_default_dof_pos = torch.tensor(np.radians([-40, -45, 60, -100, -90, 90.0,
+        #                                                       0.0, 0.0, 0.0, 0.0]), device=self._device, dtype=torch.float32)
+        self.robot_default_dof_pos = torch.tensor(np.radians([-50, -40, 50, -100, -90, 130,
+                                                              5, 70, 0.0, -90]), device=self._device, dtype=torch.float32)
 
         self.actions = torch.zeros((self._num_envs, self.num_actions), device=self._device)
 
@@ -457,14 +479,59 @@ class PCDMovingTargetTask(RLTask):
     def get_observations(self) -> dict:
         ''' retrieve point cloud data from all render products '''
         # tasks/utils/pcd_writer.py 에서 pcd sample하고 tensor로 변환해서 가져옴
-        try:
-            pointcloud = self.pointcloud_listener.get_pointcloud_data()
-            # TODO: pointcloud로부터 각 환경의 cube 위치를 가져와야 한다.
-        except:
-            pointcloud = torch.rand((self._num_envs, self._pcd_sampling_num, 3), device=self._device)
+        pointcloud = self.pointcloud_listener.get_pointcloud_data()
 
-        if pointcloud.shape[0] == 0:
-            pointcloud = torch.rand((self._num_envs, self._pcd_sampling_num, 3), device=self._device)
+        self.flange_pos, self.flange_rot = self._flanges.get_local_poses()
+        self.goal_pos, _ = self._goals.get_local_poses()
+        target_pos, target_rot_quaternion = self._targets.get_local_poses()
+        target_rot = quaternion_to_matrix(target_rot_quaternion)
+        tool_pos, tool_rot_quaternion = self._tools.get_local_poses()
+        tool_rot = quaternion_to_matrix(tool_rot_quaternion)      
+
+        # get transformation matrix from base to tool
+        T_base_to_tool = torch.eye(4, device=self._device).unsqueeze(0).repeat(self._num_envs, 1, 1)
+        T_base_to_tool[:, :3, :3] = tool_rot.clone().detach()
+        T_base_to_tool[:, :3, 3] = tool_pos.clone().detach()
+
+        ##### point cloud registration for tool #####
+        B, N, _ = self.tool_pcd.shape
+        # Convert points to homogeneous coordinates by adding a dimension with ones
+        homogeneous_points = torch.cat([self.tool_pcd, torch.ones(B, N, 1, device=self.tool_pcd.device)], dim=-1)
+        # Perform batch matrix multiplication
+        transformed_points_homogeneous = torch.bmm(homogeneous_points, T_base_to_tool.transpose(1, 2))
+        # Convert back from homogeneous coordinates by removing the last dimension
+        tool_pcd_transformed = transformed_points_homogeneous[..., :3]
+        ##### point cloud registration for tool #####
+
+
+        # get transformation matrix from base to target object
+        T_base_to_tgt = torch.eye(4, device=self._device).unsqueeze(0).repeat(self._num_envs, 1, 1)
+        T_base_to_tgt[:, :3, :3] = target_rot.clone().detach()
+        T_base_to_tgt[:, :3, 3] = target_rot.clone().detach()
+
+        ##### point cloud registration for tool #####
+        B, N, _ = self.target_pcd.shape
+        # Convert points to homogeneous coordinates by adding a dimension with ones
+        homogeneous_points = torch.cat([self.target_pcd, torch.ones(B, N, 1, device=self.target_pcd.device)], dim=-1)
+        # Perform batch matrix multiplication
+        transformed_points_homogeneous = torch.bmm(homogeneous_points, T_base_to_tgt.transpose(1, 2))
+        # Convert back from homogeneous coordinates by removing the last dimension
+        target_pcd_transformed = transformed_points_homogeneous[..., :3]
+        ##### point cloud registration for tool #####
+
+        self.target_pos_mean = torch.mean(target_pcd_transformed, dim=1)
+
+
+        # ##### farthest point from the tool to the goal #####
+        # # calculate farthest distance and idx from the tool to the goal
+        # diff = points_transformed - self.flange_pos[:, None, :]
+        # distance = diff.norm(dim=2)  # [B, N]
+
+        # # Find the index and value of the farthest point from the base coordinate
+        # farthest_idx = distance.argmax(dim=1)  # [B]
+        # # farthest_val = distance.gather(1, farthest_idx.unsqueeze(1)).squeeze(1)  # [B]
+        # self.tool_end_point = points_transformed.gather(1, farthest_idx.view(B, 1, 1).expand(B, 1, 3)).squeeze(1).squeeze(1)  # [B, 3]
+        # ##### farthest point from the tool to the goal #####
 
         '''
         아래 순서로 최종 obs_buf에 concat. 첫 차원은 환경 갯수
@@ -480,85 +547,55 @@ class PCDMovingTargetTask(RLTask):
         robot_dof_vel = self._robots.get_joint_velocities(clone=False)[:, 0:6]  # get robot dof velocity from 1st to 6th joint
         # rest of the joints are not used for control. They are fixed joints at each episode.
 
-        flange_pos, flange_rot = self._flanges.get_local_poses()
-        # target_pos, target_rot = self._targets.get_local_poses()    # TODO: 물체의 pose는 명시적인 것이 아닌, pcd를 이용하도록 하자.
-        goal_pos, goal_rot = self._goals.get_local_poses()
 
-        # get target position from point cloud
-        target_obj_pcd = pointcloud[:, -100:, :]
-        target_pos = torch.mean(target_obj_pcd, dim=1)
+        # if self.previous_target_position == None:
+        #     self.target_moving_distance = torch.zeros((self._num_envs), device=self._device)
+        #     self.current_target_position = target_pos
+        # else:
+        #     self.previous_target_position = self.current_target_position
+        #     self.current_target_position = target_pos
+        #     self.target_moving_distance = LA.norm(self.previous_target_position - self.current_target_position,
+        #                                           ord=2, dim=1)
 
-        if self.previous_target_position == None:
-            self.target_moving_distance = torch.zeros((self._num_envs), device=self._device)
-            self.current_target_position = target_pos
-        else:
-            self.previous_target_position = self.current_target_position
-            self.current_target_position = target_pos
-            self.target_moving_distance = LA.norm(self.previous_target_position - self.current_target_position,
-                                                  ord=2, dim=1)
-
-        # compute distance for calculate_metrics() and is_done()
-        if self.previous_tool_target_distance == None:
-            self.current_tool_target_distance = LA.norm(flange_pos - target_pos, ord=2, dim=1)
-            self.previous_tool_target_distance = self.current_tool_target_distance
-            self.current_target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
-            self.previous_target_goal_distance = self.current_target_goal_distance
+        # # compute distance for calculate_metrics() and is_done()
+        # if self.previous_tool_target_distance == None:
+        #     self.current_tool_target_distance = LA.norm(flange_pos - target_pos, ord=2, dim=1)
+        #     self.previous_tool_target_distance = self.current_tool_target_distance
+        #     self.current_target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
+        #     self.previous_target_goal_distance = self.current_target_goal_distance
         
-        else:
-            self.previous_tool_target_distance = self.current_tool_target_distance
-            self.previous_target_goal_distance = self.current_target_goal_distance
-            self.current_tool_target_distance = LA.norm(flange_pos - target_pos, ord=2, dim=1)
-            self.current_target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
+        # else:
+        #     self.previous_tool_target_distance = self.current_tool_target_distance
+        #     self.previous_target_goal_distance = self.current_target_goal_distance
+        #     self.current_tool_target_distance = LA.norm(flange_pos - target_pos, ord=2, dim=1)
+        #     self.current_target_goal_distance = LA.norm(target_pos - goal_pos, ord=2, dim=1)
+
 
         robot_body_dof_lower_limits = self.robot_dof_lower_limits[:6]
         robot_body_dof_upper_limits = self.robot_dof_upper_limits[:6]
 
-        # the scaler below comes from the CabinetTask
-        dof_pos_scaled = 2.0 * (robot_dof_pos - robot_body_dof_lower_limits) \
-            / (robot_body_dof_upper_limits - robot_body_dof_lower_limits) - 1.0
-        dof_vel_scaled = robot_dof_vel * self._dof_vel_scale
-
-        generalization_noise = torch.rand((dof_vel_scaled.shape[0], 6), device=self._device) + 0.5
-
-        '''
-        pcds = target_obj_pcd.detach().cpu().numpy()
-
-
-        for i in range(pcds.shape[0]):
-        
-            pcd = pcds[i]    # visualize only first env
-            
-            
-            print(f'pcd shape: {pcd.shape}')
-            point_cloud = o3d.geometry.PointCloud()
-            point_cloud.points = o3d.utility.Vector3dVector(pcd)
-            o3d.visualization.draw_geometries([point_cloud],
-                                                window_name=f'point cloud semantic')
-
+        # # normalize robot_dof_pos
+        # dof_pos_scaled = 2.0 * (robot_dof_pos - self.robot_dof_lower_limits) \
+        #     / (self.robot_dof_upper_limits - self.robot_dof_lower_limits) - 1.0   # normalized by [-1, 1]
+        # dof_pos_scaled = (robot_dof_pos - self.robot_dof_lower_limits) \
+        #                 /(self.robot_dof_upper_limits - self.robot_dof_lower_limits)    # normalized by [0, 1]
+        dof_pos_scaled = robot_dof_pos    # non-normalized
 
         
+        # # normalize robot_dof_vel
+        # dof_vel_scaled = robot_dof_vel * self._dof_vel_scale
+        # generalization_noise = torch.rand((dof_vel_scaled.shape[0], 6), device=self._device) + 0.5
+        dof_vel_scaled = robot_dof_vel    # non-normalized
 
-        pcd = target_obj_pcd[0].detach().cpu().numpy()        
-        
-        print(f'pcd shape: {pcd.shape}')
-        point_cloud = o3d.geometry.PointCloud()
-        point_cloud.points = o3d.utility.Vector3dVector(pcd)
-        o3d.visualization.draw_geometries([point_cloud],
-                                            window_name=f'point cloud semantic')
-        '''
-
-        '''
-        NE: number of environmet, N: number of points, F: feature dimension, 3: x, y, z
-        pointcloud: [NE, N, 3]
-        '''
         self.obs_buf = torch.cat((
-                                  pointcloud.view([pointcloud.shape[0], -1]),   # [NE, N*3], point cloud
+                                  tool_pcd_transformed.reshape([tool_pcd_transformed.shape[0], -1]),    # [NE, N*3], point cloud
+                                  target_pcd_transformed.reshape([target_pcd_transformed.shape[0], -1]),# [NE, N*3], point cloud
                                   dof_pos_scaled,                               # [NE, 6]
-                                  dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
-                                  flange_pos,                                   # [NE, 3]
-                                  flange_rot,                                   # [NE, 4]
-                                  target_pos,                                   # [NE, 3]
-                                  goal_pos,                                     # [NE, 3]
+                                #   dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
+                                  dof_vel_scaled[:, :6],                        # [NE, 6]
+                                  self.flange_pos,                                   # [NE, 3]
+                                  self.flange_rot,                                   # [NE, 4]
+                                  self.goal_pos,                                     # [NE, 3]
                                  ), dim=1)
         # self.obs_buf[:, 0] = self.progress_buf / self._max_episode_length
         # # 위에 있는게 꼭 들어가야 할까??? 없어도 될 것 같은데....
@@ -583,7 +620,8 @@ class PCDMovingTargetTask(RLTask):
             targets = self.robot_dof_targets[:, :6] + self.robot_dof_speed_scales[:6] * self.dt * self.actions * self._action_scale
 
         elif self._control_space == "cartesian":
-            goal_position = self.flange_pos + actions / 100.0
+            goal_position = self.flange_pos + self.actions[:, :3] / 50.0
+            goal_orientation = self.flange_rot + self.actions[:, 3:] / 70.0
             delta_dof_pos = omniverse_isaacgym_utils.ik(
                                                         jacobian_end_effector=self.jacobians[:, self._robots.body_names.index(self._flange_link)-1, :, :],
                                                         current_position=self.flange_pos,
@@ -594,9 +632,9 @@ class PCDMovingTargetTask(RLTask):
             targets = self.robot_dof_targets[:, :6] + delta_dof_pos[:, :6]
 
         self.robot_dof_targets[:, :6] = torch.clamp(targets, self.robot_dof_lower_limits[:6], self.robot_dof_upper_limits[:6])
-        self.robot_dof_targets[:, 6:] = torch.tensor(0, device=self._device, dtype=torch.float16)
-        self.robot_dof_targets[:, 6] = torch.tensor(0.09, device=self._device)
-        self.robot_dof_targets[:, 7] = torch.tensor(1.2, device=self._device)
+        self.robot_dof_targets[:, 7] = torch.tensor(self.tool_rot_x, device=self._device)
+        self.robot_dof_targets[:, 8] = torch.tensor(self.tool_rot_z, device=self._device)
+        self.robot_dof_targets[:, 9] = torch.tensor(self.tool_rot_y, device=self._device)
         ### 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. reset_idx도 확인할 것
         # self._robots.get_joint_positions()
         # self._robots.set_joint_positions(self.robot_dof_targets, indices=env_ids_int32)
@@ -610,19 +648,13 @@ class PCDMovingTargetTask(RLTask):
         indices = env_ids.to(dtype=torch.int32)
 
         # reset robot
-        # pos = torch.clamp(self.robot_default_dof_pos.unsqueeze(0) + 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs), device=self._device) - 0.5),
-        #                   self.robot_dof_lower_limits, self.robot_dof_upper_limits)
-        added_pos = 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs-4), device=self._device) - 0.5)
-        tool_pos = torch.zeros((len(env_ids), 4), device=self._device)
-        ### TODO: 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. pre_physics_step도 확인할 것
-        pos = torch.clamp(self.robot_default_dof_pos.unsqueeze(0) + torch.column_stack((added_pos, tool_pos)),
-                          self.robot_dof_lower_limits, self.robot_dof_upper_limits)
-        #########################
-        pos[:, 6] = torch.tensor(0.09, device=self._device)
-        pos[:, 7] = torch.tensor(1.2, device=self._device)
-        #########################
-
-        
+        pos = self.robot_default_dof_pos.unsqueeze(0).repeat(len(env_ids), 1)   # non-randomized
+        # ##### randomize robot pose #####
+        # randomize_manipulator_pos = 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs-4), device=self._device) - 0.5)
+        # # tool_pos = torch.zeros((len(env_ids), 4), device=self._device)  # 여기에 rand를 추가
+        # ### TODO: 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. pre_physics_step도 확인할 것
+        # pos[:, 0:6] = pos[:, 0:6] + randomize_manipulator_pos
+        # ##### randomize robot pose #####        
         
         dof_pos = torch.zeros((len(indices), self._robots.num_dof), device=self._device)
         dof_pos[:, :] = pos
@@ -634,25 +666,21 @@ class PCDMovingTargetTask(RLTask):
         self._robots.set_joint_position_targets(self.robot_dof_targets[env_ids], indices=indices)
         self._robots.set_joint_velocities(dof_vel, indices=indices)
 
-        # ##############################################################################################################
-        # self.robot_dof_targets[:, 6:] = torch.tensor(0, device=self._device, dtype=torch.float16)
-        # # self._robots.get_joint_positions()
-        # ##############################################################################################################
-
-        # reset lidar #####################
-        # self._lidar.add_depth_data_to_frame()
-        # self._lidar.add_point_cloud_data_to_frame()
-        # self._lidar.enable_visualization(high_lod=True,
-        #                                   draw_points=True,
-        #                                   draw_lines=False)
-        # self._lidar.initialize()
-
         # reset target
-        position = torch.tensor([0.50, -0.2, 0.15], device=self._device)
+        position = torch.tensor(self._target_position, device=self._device)
         target_pos = position.repeat(len(env_ids),1)
-        # target_pos = (torch.rand((len(env_ids), 3), device=self._device) - 0.5) * 2 \
-        #             * torch.tensor([0.25, 0.25, 0.10], device=self._device) \
-        #             + torch.tensor([0.50, 0.00, 0.20], device=self._device)
+        # ### randomize target position ###
+        # # x, y randomize 는 ±0.1로 uniform random
+        # # z_ref = torch.abs(target_pos[2])
+        # z_ref = torch.unsqueeze(torch.abs(target_pos[:, 2]),1)
+        # # generate uniform random values for randomizing target position
+        # # reference: https://stackoverflow.com/questions/44328530/how-to-get-a-uniform-distribution-in-a-range-r1-r2-in-pytorch
+        # x_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.1, 0.1).to(device=self._device)
+        # y_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.1, 0.1).to(device=self._device)
+        # # z_rand = z_ref.repeat(len(env_ids),1)   ### Do not randomize z position
+        # rand = torch.cat((x_rand, y_rand, z_ref), dim=1)    ### Do not randomize z position
+        # target_pos = target_pos + rand
+        # ### randomize target position ###
 
         orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)
         target_ori = orientation.repeat(len(env_ids),1)
@@ -662,15 +690,20 @@ class PCDMovingTargetTask(RLTask):
         # self._targets.enable_rigid_body_physics()
 
         # reset goal
-        # goal_pos_xy_variation = torch.rand((len(env_ids), 2), device=self._device) * 0.1
-        # goal_pos_z_variation = torch.mul(torch.ones((len(env_ids), 1), device=self._device), 0.025)
-        # goal_pos_variation = torch.cat((goal_pos_xy_variation, goal_pos_z_variation), dim=1)
-        # goal_pos = torch.tensor(self._goal_position, device=self._device) + goal_pos_variation
-        goal_pos = torch.tensor(self._goal_position, device=self._device)
-        self._goals.set_world_poses(goal_pos + self._env_pos[env_ids], indices=indices)
-
-        # reset dummy
-        # self._dummy.set_world_poses()
+        goal_mark_pos = torch.tensor(self._goal_mark, device=self._device)
+        goal_mark_pos = goal_mark_pos.repeat(len(env_ids),1)
+        # ### randomize goal position ###
+        # # x, y randomize 는 ±0.1로 uniform random
+        # # z_ref = torch.abs(goal_mark_pos[2])
+        # z_ref = torch.unsqueeze(torch.abs(goal_mark_pos[:, 2]),1)
+        # # # generate uniform random values for randomizing goal position
+        # x_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.1, 0.1).to(device=self._device)
+        # y_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.1, 0.1).to(device=self._device)
+        # # z_rand = z_ref.repeat(len(env_ids),1)   ### Do not randomize z position
+        # rand = torch.cat((x_rand, y_rand, z_ref), dim=1)    ### Do not randomize z position
+        # goal_mark_pos = goal_mark_pos + rand
+        # ### randomize goal position ###
+        self._goals.set_world_poses(goal_mark_pos + self._env_pos[env_ids], indices=indices)
 
         # bookkeeping
         self.reset_buf[env_ids] = 0
@@ -687,30 +720,23 @@ class PCDMovingTargetTask(RLTask):
         # self._targets.enable_rigid_body_physics()
         # self._targets.enable_gravities()
 
-
-
         # randomize all envs
         indices = torch.arange(self._num_envs, dtype=torch.int64, device=self._device)
         self.reset_idx(indices)
 
     def calculate_metrics(self) -> None:
-        # self.rew_buf[:] = -self._computed_tool_target_distance - self._computed_target_goal_distance
-        tool_target_distance_reward = 1 / (self.current_tool_target_distance + 1e-5)
-        target_goal_distance_reward = 1 / (self.current_target_goal_distance + 1e-5)
+        initialized_idx = self.progress_buf == 1
+        self.current_target_goal_distance = LA.norm(self.goal_pos - self.target_pos_mean, ord=2, dim=1)
+        self.initial_target_goal_distance[initialized_idx] = self.current_tool_goal_distance[initialized_idx]
 
-        delta_tool_target = self.previous_tool_target_distance - self.current_tool_target_distance
-        delta_target_goal = self.previous_target_goal_distance - self.current_target_goal_distance
+        init_t_g_d = self.initial_target_goal_distance
+        cur_t_g_d = self.current_target_goal_distance
+        target_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d)
 
-        avoiding_non_touch = torch.abs(1 / (self.target_moving_distance + 0.5))
-
-        self.completion_reward = torch.zeros(self._num_envs).to(self._device)
-        self.completion_reward[self.current_target_goal_distance<0.035] = 1
-        self.rew_buf[:] = self.alpha * tool_target_distance_reward + \
-                          self.beta * target_goal_distance_reward + \
-                          self.gamma * self.completion_reward + \
-                          self.zeta * delta_tool_target + \
-                          self.eta * delta_target_goal + \
-                          self.punishment * avoiding_non_touch        
+        # self.completion_reward = torch.zeros(self._num_envs).to(self._device)
+        # self.completion_reward[self.current_tool_goal_distance <= 0.05] = 10.0
+        # self.rew_buf[:] = tool_goal_distance_reward + self.completion_reward
+        self.rew_buf[:] = target_goal_distance_reward    
         
         # 시간이 지나도 target이 움직이지 않으면 minus reward를 주어야 할 듯
 
@@ -721,10 +747,24 @@ class PCDMovingTargetTask(RLTask):
         '''
 
     def is_done(self) -> None:
-        self.reset_buf.fill_(0)
+        ones = torch.ones_like(self.reset_buf)
+        reset = torch.zeros_like(self.reset_buf)
+
+        # # workspace regularization
+        reset = torch.where(self.tool_pos[:, 0] < self.x_min, ones, reset)
+        reset = torch.where(self.tool_pos[:, 1] < self.y_min, ones, reset)
+        reset = torch.where(self.tool_pos[:, 0] > self.x_max, ones, reset)
+        reset = torch.where(self.tool_pos[:, 1] > self.y_max, ones, reset)
+        reset = torch.where(self.tool_pos[:, 2] > 0.5, ones, reset)
+        reset = torch.where(self.target_pos[:, 0] < self.x_min, ones, reset)
+        reset = torch.where(self.target_pos[:, 1] < self.y_min, ones, reset)
+        reset = torch.where(self.target_pos[:, 0] > self.x_max, ones, reset)
+        reset = torch.where(self.target_pos[:, 1] > self.y_max, ones, reset)
+        reset = torch.where(self.target_pos[:, 2] > 0.5, ones, reset)
+
         # target reached
-        # self.reset_buf = torch.where(self._computed_target_goal_distance <= 0.035, torch.ones_like(self.reset_buf), self.reset_buf)
-        self.reset_buf = torch.where(self.current_target_goal_distance <= 0.025, torch.ones_like(self.reset_buf), self.reset_buf)
+        reset = torch.where(self.current_target_goal_distance < 0.05, ones, reset)
+
         # max episode length
-        self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
+        self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, ones, reset)
 
