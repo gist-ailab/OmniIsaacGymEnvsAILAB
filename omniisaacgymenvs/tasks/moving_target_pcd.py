@@ -22,12 +22,14 @@ from omni.isaac.core.utils.prims import get_prim_at_path, is_prim_path_valid
 from omni.isaac.core.materials.physics_material import PhysicsMaterial
 
 from skrl.utils import omniverse_isaacgym_utils
-from pxr import Usd, UsdGeom, Gf, UsdPhysics, Semantics              # pxr usd imports used to create cube
-from pytorch3d.transforms import quaternion_to_matrix
+from pxr import Usd, UsdGeom, Gf, UsdPhysics, Semantics # pxr usd imports used to create cube
 
 from typing import Optional, Tuple
 
 import open3d as o3d
+import open3d.core as o3c
+import pytorch3d
+from pytorch3d.transforms import quaternion_to_matrix
 
 import copy
 
@@ -37,7 +39,6 @@ import copy
 # - calculate_metrics()
 # - is_done()
 # - get_extras()    
-
 
 class PCDMovingTargetTask(RLTask):
     def __init__(self, name, sim_config, env, offset=None) -> None:
@@ -54,14 +55,6 @@ class PCDMovingTargetTask(RLTask):
         self._env = env
         
         self.initial_tool_goal_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
-
-        self.previous_tool_target_distance = None
-        self.current_tool_target_distance = None
-        self.previous_target_goal_distance = None
-        self.current_target_goal_distance = None
-        self.previous_target_position = None
-        self.current_target_position = None
-        self.target_moving_distance = None
         
         self.alpha = 0.15
         self.beta = 0.5
@@ -78,10 +71,16 @@ class PCDMovingTargetTask(RLTask):
         self.tool_rot_y = -1.5707 # -90 degree
 
         # workspace 2D boundary
-        self.x_min = 0.45
-        self.x_max = 1.2
-        self.y_min = -0.8
-        self.y_max = 0.4
+        # self.x_min = 0.45
+        # self.x_max = 1.2
+        # self.y_min = -0.8
+        # self.y_max = 0.4
+        self.x_min = 0.3
+        self.x_max = 0.9
+        self.y_min = -0.6
+        self.y_max = 0.6
+        self.z_min = 0.1
+        self.z_max = 0.7
 
         self._pcd_sampling_num = self._task_cfg["sim"]["point_cloud_samples"]
         self._num_pcd_masks = 2 # tool and target
@@ -96,16 +95,13 @@ class PCDMovingTargetTask(RLTask):
         self.tool_pcd = tool_pcd.unsqueeze(0).repeat(self._num_envs, 1, 1)
         self.tool_pcd = self.tool_pcd.float()
 
-        # TODO: cylinder 추가
-        # TODO: 왠지 처음 tool 나올 때, 로봇이 바닥에 처박혀있는 것 같은데 로봇 팔이 더 위에서 시작하도록 수정
         target_o3d_pcd = o3d.io.read_point_cloud("/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/cylinder/cylinder.ply")
-        o3d_downsampled_pcd = tool_o3d_pcd.farthest_point_down_sample(self._pcd_sampling_num)
+        o3d_downsampled_pcd = target_o3d_pcd.farthest_point_down_sample(self._pcd_sampling_num)
         downsampled_points = np.array(o3d_downsampled_pcd.points)
         target_pcd = torch.from_numpy(downsampled_points).to(device)
         self.target_pcd = target_pcd.unsqueeze(0).repeat(self._num_envs, 1, 1)
         self.target_pcd = self.target_pcd.float()
 
-        
         # observation and action space
         pcd_observations = self._pcd_sampling_num * self._num_pcd_masks * 3     # 2 is a number of point cloud masks and 3 is a cartesian coordinate
         self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 3
