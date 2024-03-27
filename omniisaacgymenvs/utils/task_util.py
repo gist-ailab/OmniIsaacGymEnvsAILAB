@@ -49,7 +49,6 @@ def import_tasks():
     from omniisaacgymenvs.tasks.reaching_target import BasicReachingTargetTask   ### BSH
     from omniisaacgymenvs.tasks.moving_target_pcd import PCDMovingTargetTask   ### BSH
     from omniisaacgymenvs.tasks.reaching_target_pcd import PCDReachingTargetTask   ### BSH
-
     from omniisaacgymenvs.tasks.warp.ant import AntLocomotionTask as AntLocomotionTaskWarp
     from omniisaacgymenvs.tasks.warp.cartpole import CartpoleTask as CartpoleTaskWarp
     from omniisaacgymenvs.tasks.warp.humanoid import HumanoidLocomotionTask as HumanoidLocomotionTaskWarp
