@@ -16,7 +16,7 @@ from skrl.resources.schedulers.torch import KLAdaptiveRL
 from skrl.trainers.torch import SequentialTrainer
 from skrl.utils import set_seed
 
-from omniisaacgymenvs.model.shared import Shared
+from omniisaacgymenvs.model.basic_shared import BasicShared
 
 # seed for reproducibility
 seed = 42
@@ -38,7 +38,7 @@ memory = RandomMemory(memory_size=16, num_envs=env.num_envs, device=device)
 # https://skrl.readthedocs.io/en/latest/api/agents/ppo.html#models
 models = {}
 # models["policy"] = SharedTransformerEnc(env.observation_space, env.action_space, env.num_envs, device)
-models["policy"] = Shared(env.observation_space, env.action_space, device)
+models["policy"] = BasicShared(env.observation_space, env.action_space, device)
 models["value"] = models["policy"]  # same instance: shared model
 
 
@@ -78,7 +78,7 @@ cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
 
 # logging to TensorBoard and write checkpoints (in timesteps)
 # cfg["experiment"]["write_interval"] = 100
-# cfg["experiment"]["checkpoint_interval"] = 500
+cfg["experiment"]["checkpoint_interval"] = 500
 cfg["experiment"]["write_interval"] = 10
 
 now = datetime.now()
@@ -86,7 +86,7 @@ formatted_date = now.strftime("%y%m%d_%H%M%S")
 # cfg["experiment"]["experiment_name"] = f"{formatted_date}_wo_Norm_wo_Rand_w_Preprocessor_Obj2Goal"
 cfg["experiment"]["experiment_name"] = f"dumy"
 
-cfg["experiment"]["directory"] = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/MovingTarget_Basic_Cylinder"
+cfg["experiment"]["directory"] = "runs/torch/MovingTarget_Basic_Cylinder"
 # cfg["experiment"]["directory"] = "runs/torch/MovingTarget_Basic_wo_punishment"
 
 agent = PPO(models=models,
@@ -111,7 +111,7 @@ trainer = SequentialTrainer(cfg=cfg_trainer, env=env, agents=agent)
 
 # download the trained agent's checkpoint from Hugging Face Hub and load it
 # path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-FrankaCabinet-PPO", filename="agent.pt")
-path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/MovingTarget_Basic_Cylinder/240219_211045_wo_Norm_wo_Rand_w_Preprocessor_Obj2Goal/checkpoints/best_agent.pt'
+path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.0-hotifx.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/MovingTarget_Basic_Cylinder/240219_211045_wo_Norm_wo_Rand_w_Preprocessor_Obj2Goal/checkpoints/best_agent.pt'
 agent.load(path)
 
 # start evaluation
