@@ -27,7 +27,6 @@ env = load_omniverse_isaacgym_env(task_name="PCDReachingTarget")
 # env.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(env.observation_space.shape[0],3), dtype=np.float32)
 env = wrap_env(env)
 
-
 device = env.device
 
 # instantiate a memory as rollout buffer (any memory can be used for this)
@@ -88,8 +87,8 @@ cfg["experiment"]["checkpoint_interval"] = 200
 
 now = datetime.now()
 formatted_date = now.strftime("%y%m%d_%H%M%S")
-cfg["experiment"]["experiment_name"] = f"{formatted_date}_Reaching_Target_Simple_Shared"
-# cfg["experiment"]["experiment_name"] = f"dummy"
+# cfg["experiment"]["experiment_name"] = f"{formatted_date}_Reaching_Target_Simple_Shared"
+cfg["experiment"]["experiment_name"] = f"dummy"
 
 cfg["experiment"]["directory"] = "./runs/torch/Reaching_Target_PCD"
 
@@ -104,8 +103,8 @@ agent = PPO(models=models,
 cfg_trainer = {"timesteps": 30000, "headless": False}
 trainer = SequentialTrainer(cfg=cfg_trainer, env=env, agents=agent)
 
-# start training
-trainer.train()
+# # start training
+# trainer.train()
 
 # # ---------------------------------------------------------
 # # comment the code above: `trainer.train()`, and...
@@ -113,10 +112,10 @@ trainer.train()
 # # ---------------------------------------------------------
 # from skrl.utils.huggingface import download_model_from_huggingface
 
-# # download the trained agent's checkpoint from Hugging Face Hub and load it
-# # path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-FrankaCabinet-PPO", filename="agent.pt")
-# path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/Reaching_Target_PCD/240324_233841_Reaching_Target_Simple_Shared/checkpoints/agent_5400.pt'
-# agent.load(path)
+# download the trained agent's checkpoint from Hugging Face Hub and load it
+# path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-FrankaCabinet-PPO", filename="agent.pt")
+path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/Reaching_Target_PCD/240325_111738_Reaching_Target_Simple_Shared/checkpoints/best_agent.pt'
+agent.load(path)
 
-# # start evaluation
-# trainer.eval()
+# start evaluation
+trainer.eval()
