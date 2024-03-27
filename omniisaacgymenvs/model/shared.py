@@ -23,8 +23,8 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
         self.pcd_config = {
                            "model": "pn",
                            "dropout": 0.,
-                        #    "num_pcd_masks": 2,       # TODO: 외부 config에서 pcd mask 개수를 받아와야 함.
-                           "num_pcd_masks": 1,       # TODO: 외부 config에서 pcd mask 개수를 받아와야 함.
+                           "num_pcd_masks": 2,       # TODO: 외부 config에서 pcd mask 개수를 받아와야 함.
+                        #    "num_pcd_masks": 1,       # TODO: 외부 config에서 pcd mask 개수를 받아와야 함.
                            "fps_deterministic": False,
                            "pos_in_feature": False,
                            "normalize_pos": True,
@@ -80,7 +80,11 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
         ### 240317 added. pcd mask 개수를 꼭 cfg로 받아야 하나? 가변적일 수도 있음. 우선 reaching target task에서는 1개로 고정.
         # TODO: goal pos는 robot state에 넣지 말고 combined features에 바로 붙여주자.
         N = self.pcd_sampling_num
-        pcd_data = inputs["states"][:, :N*3]    # [B, N*3]. flatten pcd data
+        entire_pcd_num = N * num_of_sub_mask
+
+        # TODO: pcd mask 개수에 따라 pcd_data의 shape이 달라질 수 있음. 이를 고려해서 자동으로 반영 되도록 코드를 수정해야 함.
+
+        pcd_data = inputs["states"][:, :entire_pcd_num]    # [B, N*3]. flattened pcd data
         pcd_pos_data = pcd_data.view([pcd_data.shape[0], -1, 3])    # [B, N, 3], 3 is x, y, z
         robot_state = inputs["states"][:, N*3:-3] # B, RS
         goal_pos = inputs["states"][:, -3:] # B, 3
@@ -154,8 +158,6 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
         # # # Concatenate along the third dimension
         # # combined_features = torch.cat((point_feature, robot_states_expanded), dim=2)
         ########################################## PointNet2 ##########################################
-
-
 
 
         if role == "policy":
