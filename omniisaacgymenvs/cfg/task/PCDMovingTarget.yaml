@@ -6,7 +6,7 @@ physics_engine: ${..physics_engine}
 # if given, will override the device setting in gym. 
 env:
   # numEnvs: ${resolve_default:4096,${...num_envs}}
-  numEnvs: ${resolve_default:1,${...num_envs}}
+  numEnvs: ${resolve_default:3,${...num_envs}}
   envSpacing: 3.0
   episodeLength: 300
   enableDebugVis: False
@@ -22,7 +22,8 @@ env:
   aggregateMode: 3  # 안 쓰는데 왜 있는건지?
 
   controlSpace: "cartesian"
-  goal: [0.5, 0.3, 0.0]
+  goal: [0.85, 0, 0.1]
+  target: [0.85, -0.45, 0.03] # the object's initial position
 
   ########## reward parameters ##########
   actionScale: 2.5
@@ -51,7 +52,7 @@ sim:
   # enable_cameras: False
   enable_cameras: True  # 231121 added BSH for PytorchListener
   point_cloud_normalization: False # 240105 added BSH, but normalize at pointnet2.py
-  point_cloud_samples: 100 # 240108 added BSH
+  point_cloud_samples: 500 # 240108 added BSH
 
   default_physics_material:
     static_friction: 1.0
@@ -105,26 +106,38 @@ sim:
   
   target: # BSH
     override_usd_defaults: False
-    make_kinematic: False # BSH
-    fixed_base: False # BSH
+    # make_kinematic: False # BSH
+    # make_kinematic: False # BSH
+    # fixed_base: False # BSH
     enable_self_collisions: True
     enable_gyroscopic_forces: True
     # also in stage params
     # per-actor
-    solver_position_iteration_count: 12
+    solver_position_iteration_count: 4
     solver_velocity_iteration_count: 1
     sleep_threshold: 0.005
     stabilization_threshold: 0.001
     # per-body
-    density: 10
+    density: -1
     max_depenetration_velocity: 1000.0
     contact_offset: 0.005
     rest_offset: 0.0
   
   goal: # BSH
     override_usd_defaults: False
-    make_kinematic: True  # BSH 이게 True여야 움직이지 않는 물체가 됨
-    # fixed_base: True
+    make_kinematic: True  # BSH 이게 True여야 움직이지 않는 물체가 됨 
     enable_self_collisions: False
     enable_gyroscopic_forces: True
+    # disable_rigid_body_physics: True
+    # disable_rigid_body_physics: False
+    fixed_base: False
+    
+    # also in stage params
+    # per-actor
+    solver_position_iteration_count: 6
+    solver_velocity_iteration_count: 0
+    sleep_threshold: 0.005
+    stabilization_threshold: 0.001
+    # per-body
     density: -1
+    max_depenetration_velocity: 1000.0
