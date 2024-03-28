@@ -88,14 +88,17 @@ class PCDMovingTargetTask(RLTask):
 
         # get tool point cloud from ply and convert it to torch tensor
         device = torch.device(self.cfg["rl_device"])
-        tool_o3d_pcd = o3d.io.read_point_cloud("/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/tool.ply")
+        tool_o3d_pcd = o3d.io.read_point_cloud("/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/tool.ply")
         o3d_downsampled_pcd = tool_o3d_pcd.farthest_point_down_sample(self._pcd_sampling_num)
         downsampled_points = np.array(o3d_downsampled_pcd.points)
         tool_pcd = torch.from_numpy(downsampled_points).to(device)
         self.tool_pcd = tool_pcd.unsqueeze(0).repeat(self._num_envs, 1, 1)
         self.tool_pcd = self.tool_pcd.float()
 
-        target_o3d_pcd = o3d.io.read_point_cloud("/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/cylinder/cylinder.ply")
+        target_o3d_pcd = o3d.io.read_point_cloud("/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/cylinder/cylinder.ply")
+        # rotate with x-axis 90 degree
+        R = target_o3d_pcd.get_rotation_matrix_from_xyz((np.pi / 2, 0, 0))
+        target_o3d_pcd.rotate(R, center=(0, 0, 0))
         o3d_downsampled_pcd = target_o3d_pcd.farthest_point_down_sample(self._pcd_sampling_num)
         downsampled_points = np.array(o3d_downsampled_pcd.points)
         target_pcd = torch.from_numpy(downsampled_points).to(device)
@@ -514,6 +517,55 @@ class PCDMovingTargetTask(RLTask):
         # Convert back from homogeneous coordinates by removing the last dimension
         target_pcd_transformed = transformed_points_homogeneous[..., :3]
         ##### point cloud registration for tool #####
+
+
+        ##################### ####################################
+        ################# visualize point cloud #################
+        # view_idx = 0
+
+        # base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
+        # tool_pos_np = tool_pos[view_idx].cpu().numpy()
+        # tool_rot_np = tool_rot[view_idx].cpu().numpy()
+        # tgt_pos_np = target_pos[view_idx].cpu().numpy()
+        # tgt_rot_np = target_rot[view_idx].cpu().numpy()
+        
+        # tool_transformed_pcd_np = tool_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
+        # tool_transformed_point_cloud = o3d.geometry.PointCloud()
+        # tool_transformed_point_cloud.points = o3d.utility.Vector3dVector(tool_transformed_pcd_np)
+        # T_t = np.eye(4)
+        # T_t[:3, :3] = tool_rot_np
+        # T_t[:3, 3] = tool_pos_np
+        # tool_coord = copy.deepcopy(base_coord).transform(T_t)
+
+        # tgt_transformed_pcd_np = target_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
+        # tgt_transformed_point_cloud = o3d.geometry.PointCloud()
+        # tgt_transformed_point_cloud.points = o3d.utility.Vector3dVector(tgt_transformed_pcd_np)
+        # T_o = np.eye(4)
+
+        # # R_b = tgt_rot_np.get_rotation_matrix_from_xyz((np.pi/2, 0, 0))
+        # T_o[:3, :3] = tgt_rot_np
+        # # T_o[:3, :3] = R_b
+        # T_o[:3, 3] = tgt_pos_np
+        # tgt_coord = copy.deepcopy(base_coord).transform(T_o)
+
+        # goal_pos_np = self.goal_pos[view_idx].cpu().numpy()
+        # goal_cone = o3d.geometry.TriangleMesh.create_cone(radius=0.01, height=0.03)
+        # goal_cone.paint_uniform_color([0, 1, 0])
+        # T_g_p = np.eye(4)
+        # T_g_p[:3, 3] = goal_pos_np
+        # goal_position = copy.deepcopy(goal_cone).transform(T_g_p)
+
+        # o3d.visualization.draw_geometries([base_coord,
+        #                                    tool_transformed_point_cloud,
+        #                                    tgt_transformed_point_cloud,
+        #                                    tool_coord,
+        #                                    tgt_coord,
+        #                                    goal_position,],
+        #                                     window_name=f'point cloud')
+        ################# visualize point cloud #################
+        #########################################################
+
+
 
         self.target_pos_mean = torch.mean(target_pcd_transformed, dim=1)
 
