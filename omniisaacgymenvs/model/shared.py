@@ -2,11 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from skrl.models.torch import DeterministicMixin, GaussianMixin, Model
-from omniisaacgymenvs.model.common import init_network
+# from omniisaacgymenvs.model.common import init_network
 from omniisaacgymenvs.model.pointnet import PointNet
-from omniisaacgymenvs.model.transformer_enc import TransformerEnc
-from omniisaacgymenvs.algos.feature_extractor import PointCloudExtractor
-from omniisaacgymenvs.model.attention import AttentionPooling
+# from omniisaacgymenvs.model.transformer_enc import TransformerEnc
+# from omniisaacgymenvs.algos.feature_extractor import PointCloudExtractor
+# from omniisaacgymenvs.model.attention import AttentionPooling
 
 # define shared model (stochastic and deterministic models) using mixins
 class Shared(GaussianMixin, DeterministicMixin, Model):
@@ -80,7 +80,7 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
         ### 240317 added. pcd mask 개수를 꼭 cfg로 받아야 하나? 가변적일 수도 있음. 우선 reaching target task에서는 1개로 고정.
         # TODO: goal pos는 robot state에 넣지 말고 combined features에 바로 붙여주자.
         N = self.pcd_sampling_num
-        entire_pcd_num = N * num_of_sub_mask
+        entire_pcd_num = N * num_of_sub_mask * 3
 
         # TODO: pcd mask 개수에 따라 pcd_data의 shape이 달라질 수 있음. 이를 고려해서 자동으로 반영 되도록 코드를 수정해야 함.
 
