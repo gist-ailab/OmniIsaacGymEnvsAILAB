@@ -54,7 +54,7 @@ class PCDMovingTargetTask(RLTask):
         self.dt = 1 / 120.0
         self._env = env
         
-        self.initial_tool_goal_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
+        self.initial_target_goal_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
         
         self.alpha = 0.15
         self.beta = 0.5
@@ -503,7 +503,7 @@ class PCDMovingTargetTask(RLTask):
         # get transformation matrix from base to target object
         T_base_to_tgt = torch.eye(4, device=self._device).unsqueeze(0).repeat(self._num_envs, 1, 1)
         T_base_to_tgt[:, :3, :3] = target_rot.clone().detach()
-        T_base_to_tgt[:, :3, 3] = target_rot.clone().detach()
+        T_base_to_tgt[:, :3, 3] = target_pos.clone().detach()
 
         ##### point cloud registration for tool #####
         B, N, _ = self.target_pcd.shape
@@ -584,8 +584,10 @@ class PCDMovingTargetTask(RLTask):
         dof_vel_scaled = robot_dof_vel    # non-normalized
 
         self.obs_buf = torch.cat((
-                                  tool_pcd_transformed.reshape([tool_pcd_transformed.shape[0], -1]),    # [NE, N*3], point cloud
-                                  target_pcd_transformed.reshape([target_pcd_transformed.shape[0], -1]),# [NE, N*3], point cloud
+                                #   tool_pcd_transformed.reshape([tool_pcd_transformed.shape[0], -1]),     # [NE, N*3], point cloud
+                                #   target_pcd_transformed.reshape([target_pcd_transformed.shape[0], -1]), # [NE, N*3], point cloud
+                                  tool_pcd_transformed.contiguous().view(self._num_envs, -1),
+                                  target_pcd_transformed.contiguous().view(self._num_envs, -1),
                                   dof_pos_scaled,                               # [NE, 6]
                                 #   dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
                                   dof_vel_scaled[:, :6],                        # [NE, 6]
@@ -723,7 +725,7 @@ class PCDMovingTargetTask(RLTask):
     def calculate_metrics(self) -> None:
         initialized_idx = self.progress_buf == 1
         self.current_target_goal_distance = LA.norm(self.goal_pos - self.target_pos_mean, ord=2, dim=1)
-        self.initial_target_goal_distance[initialized_idx] = self.current_tool_goal_distance[initialized_idx]
+        self.initial_target_goal_distance[initialized_idx] = self.current_target_goal_distance[initialized_idx]
 
         init_t_g_d = self.initial_target_goal_distance
         cur_t_g_d = self.current_target_goal_distance
@@ -747,16 +749,16 @@ class PCDMovingTargetTask(RLTask):
         reset = torch.zeros_like(self.reset_buf)
 
         # # workspace regularization
-        reset = torch.where(self.tool_pos[:, 0] < self.x_min, ones, reset)
-        reset = torch.where(self.tool_pos[:, 1] < self.y_min, ones, reset)
-        reset = torch.where(self.tool_pos[:, 0] > self.x_max, ones, reset)
-        reset = torch.where(self.tool_pos[:, 1] > self.y_max, ones, reset)
-        reset = torch.where(self.tool_pos[:, 2] > 0.5, ones, reset)
-        reset = torch.where(self.target_pos[:, 0] < self.x_min, ones, reset)
-        reset = torch.where(self.target_pos[:, 1] < self.y_min, ones, reset)
-        reset = torch.where(self.target_pos[:, 0] > self.x_max, ones, reset)
-        reset = torch.where(self.target_pos[:, 1] > self.y_max, ones, reset)
-        reset = torch.where(self.target_pos[:, 2] > 0.5, ones, reset)
+        reset = torch.where(self.flange_pos[:, 0] < self.x_min, ones, reset)
+        reset = torch.where(self.flange_pos[:, 1] < self.y_min, ones, reset)
+        reset = torch.where(self.flange_pos[:, 0] > self.x_max, ones, reset)
+        reset = torch.where(self.flange_pos[:, 1] > self.y_max, ones, reset)
+        reset = torch.where(self.flange_pos[:, 2] > 0.5, ones, reset)
+        reset = torch.where(self.target_pos_mean[:, 0] < self.x_min, ones, reset)
+        reset = torch.where(self.target_pos_mean[:, 1] < self.y_min, ones, reset)
+        reset = torch.where(self.target_pos_mean[:, 0] > self.x_max, ones, reset)
+        reset = torch.where(self.target_pos_mean[:, 1] > self.y_max, ones, reset)
+        reset = torch.where(self.target_pos_mean[:, 2] > 0.5, ones, reset)
 
         # target reached
         reset = torch.where(self.current_target_goal_distance < 0.05, ones, reset)
