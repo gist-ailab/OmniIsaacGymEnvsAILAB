@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import gym
 import numpy as np
+from datetime import datetime
 
 # import the skrl components to build the RL system
 from skrl.agents.torch.ppo import PPO, PPO_DEFAULT_CONFIG
@@ -15,7 +16,7 @@ from skrl.resources.schedulers.torch import KLAdaptiveRL
 from skrl.trainers.torch import SequentialTrainer
 from skrl.utils import set_seed
 
-from omniisaacgymenvs.model.shared_transformer import SharedTransformerEnc
+# from omniisaacgymenvs.model.shared_transformer import SharedTransformerEnc
 from omniisaacgymenvs.model.shared import Shared
 
 # seed for reproducibility
@@ -75,8 +76,10 @@ cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
 # logging to TensorBoard and write checkpoints (in timesteps)
 cfg["experiment"]["write_interval"] = 120
 cfg["experiment"]["checkpoint_interval"] = 1000
-# cfg["experiment"]["experiment_name"] = "Pointnet2+MLP"
-cfg["experiment"]["experiment_name"] = "dummy"
+
+now = datetime.now()
+formatted_date = now.strftime("%y%m%d_%H%M%S")
+cfg["experiment"]["experiment_name"] = f"{formatted_date}_PCD_Moving_Target"
 
 cfg["experiment"]["directory"] = "runs/torch/PCDMovingTarget"
 
