@@ -191,84 +191,84 @@ class PCDMovingTargetTask(RLTask):
         scene.add(self._goals)
         
         
-        # point cloud view
-        self.render_products = []
-        camera_positions = {0: [1.5, 1.5, 0.5],
-                            1: [2, -1.3, 0.5],
-                            2: [-0.5, -1.2, 0.5]}
-                            # 2: [-1.5, -2.2, 0.5]}
-                            # 2: [-4.8, -6.1, 0.5]}
-        camera_rotations = {0: [0, -10, 50],
-                            1: [0, -10, -45],
-                            2: [0, -10, -130]}
-        env_pos = self._env_pos.cpu()
+        # # point cloud view
+        # self.render_products = []
+        # camera_positions = {0: [1.5, 1.5, 0.5],
+        #                     1: [2, -1.3, 0.5],
+        #                     2: [-0.5, -1.2, 0.5]}
+        #                     # 2: [-1.5, -2.2, 0.5]}
+        #                     # 2: [-4.8, -6.1, 0.5]}
+        # camera_rotations = {0: [0, -10, 50],
+        #                     1: [0, -10, -45],
+        #                     2: [0, -10, -130]}
+        # env_pos = self._env_pos.cpu()
 
-        # Used to get depth data from the camera
-        for i in range(self._num_envs):
-            self.rep.get.camera()
-            # Get the parameters of the camera via links below
-            # https://learn.microsoft.com/en-us/answers/questions/201906/pixel-size-of-rgb-and-tof-camera#:~:text=Pixel%20Size%20for,is%20~2.3%20mm
-            # https://docs.omniverse.nvidia.com/isaacsim/latest/features/sensors_simulation/isaac_sim_sensors_camera.html#calibrated-camera-sensors
-            '''
-            Azure Kinect DK
-            [Depth Camera]
-            focal_length = 0.18 (cm)
-            focus_distance = 3.86 (m) 그런데 clipping range가 있는데 이게 어떻게 작용할지 불확실함
-            horizontal_aperture = 0.224 (cm)
-            vertical_aperture = 0.2016 (cm)
-            clipping_range = 0.5 ~ 3.86 (m)
-            위 값을 RGB로 가시화 하면 이상하긴 한데, depth camera 니까 우선 해보자.
+        # # Used to get depth data from the camera
+        # for i in range(self._num_envs):
+        #     self.rep.get.camera()
+        #     # Get the parameters of the camera via links below
+        #     # https://learn.microsoft.com/en-us/answers/questions/201906/pixel-size-of-rgb-and-tof-camera#:~:text=Pixel%20Size%20for,is%20~2.3%20mm
+        #     # https://docs.omniverse.nvidia.com/isaacsim/latest/features/sensors_simulation/isaac_sim_sensors_camera.html#calibrated-camera-sensors
+        #     '''
+        #     Azure Kinect DK
+        #     [Depth Camera]
+        #     focal_length = 0.18 (cm)
+        #     focus_distance = 3.86 (m) 그런데 clipping range가 있는데 이게 어떻게 작용할지 불확실함
+        #     horizontal_aperture = 0.224 (cm)
+        #     vertical_aperture = 0.2016 (cm)
+        #     clipping_range = 0.5 ~ 3.86 (m)
+        #     위 값을 RGB로 가시화 하면 이상하긴 한데, depth camera 니까 우선 해보자.
             
-            여기 보면 또 mm임..
-            https://docs.omniverse.nvidia.com/isaacsim/latest/manual_replicator_composer_parameter_list.html#camera-lens
+        #     여기 보면 또 mm임..
+        #     https://docs.omniverse.nvidia.com/isaacsim/latest/manual_replicator_composer_parameter_list.html#camera-lens
             
 
-            [RGB Camera]
-            focal_length = 0.23 (cm)
-            focus_distance = 5 (m) 그런데 clipping range가 있는데 이게 어떻게 작용할지 불확실함
-            horizontal_aperture = 0.24 (cm)
-            vertical_aperture = 0.135 (cm)
-            clipping_range = 0.01 ~ 10 (m)
-            '''
-            # pos: (2 -1.3 0.5), ori: (0, -10, -45)
-            # pos: (-1.5 -2.2 0.5), ori: (0, -10, -130)
-            # 
+        #     [RGB Camera]
+        #     focal_length = 0.23 (cm)
+        #     focus_distance = 5 (m) 그런데 clipping range가 있는데 이게 어떻게 작용할지 불확실함
+        #     horizontal_aperture = 0.24 (cm)
+        #     vertical_aperture = 0.135 (cm)
+        #     clipping_range = 0.01 ~ 10 (m)
+        #     '''
+        #     # pos: (2 -1.3 0.5), ori: (0, -10, -45)
+        #     # pos: (-1.5 -2.2 0.5), ori: (0, -10, -130)
+        #     # 
 
-            for j in range(3):
-                locals()[f"camera_{j}"] = self.rep.create.camera(
-                                                                 position = (env_pos[i][0] + camera_positions[j][0],
-                                                                             env_pos[i][1] + camera_positions[j][1],
-                                                                             env_pos[i][2] + camera_positions[j][2]),
-                                                                 rotation=(camera_rotations[j][0],
-                                                                           camera_rotations[j][1],
-                                                                           camera_rotations[j][2]), 
-                                                                 focal_length=18.0,
-                                                                 focus_distance=400,
-                                                                 horizontal_aperture=20.955,
-                                                                 # vertical_aperture=0.2016,
-                                                                 # clipping_range=(0.5, 3.86),
-                                                                 clipping_range=(0.01, 3),
-                                                                 # TODO: clipping range 조절해서 환경이 서로 안 겹치게 하자.
-                                                                 )
+        #     for j in range(3):
+        #         locals()[f"camera_{j}"] = self.rep.create.camera(
+        #                                                          position = (env_pos[i][0] + camera_positions[j][0],
+        #                                                                      env_pos[i][1] + camera_positions[j][1],
+        #                                                                      env_pos[i][2] + camera_positions[j][2]),
+        #                                                          rotation=(camera_rotations[j][0],
+        #                                                                    camera_rotations[j][1],
+        #                                                                    camera_rotations[j][2]), 
+        #                                                          focal_length=18.0,
+        #                                                          focus_distance=400,
+        #                                                          horizontal_aperture=20.955,
+        #                                                          # vertical_aperture=0.2016,
+        #                                                          # clipping_range=(0.5, 3.86),
+        #                                                          clipping_range=(0.01, 3),
+        #                                                          # TODO: clipping range 조절해서 환경이 서로 안 겹치게 하자.
+        #                                                          )
                 
-                render_product = self.rep.create.render_product(locals()[f"camera_{j}"], resolution=(self.camera_width, self.camera_height))
-                self.render_products.append(render_product)
+        #         render_product = self.rep.create.render_product(locals()[f"camera_{j}"], resolution=(self.camera_width, self.camera_height))
+        #         self.render_products.append(render_product)
 
-        # start replicator to capture image data
-        self.rep.orchestrator._orchestrator._is_started = True
+        # # start replicator to capture image data
+        # self.rep.orchestrator._orchestrator._is_started = True
 
-        # initialize pytorch writer for vectorized collection
-        self.pointcloud_listener = self.PointcloudListener()
-        self.pointcloud_writer = self.rep.WriterRegistry.get("PointcloudWriter")
-        self.pointcloud_writer.initialize(listener=self.pointcloud_listener,
-                                          pcd_sampling_num=self._pcd_sampling_num,
-                                          pcd_normalize = self._pcd_normalization,
-                                          env_pos = self._env_pos.cpu(),
-                                          camera_positions=camera_positions,
-                                          camera_orientations=camera_rotations,
-                                          device=self.device,
-                                          )
-        self.pointcloud_writer.attach(self.render_products)
+        # # initialize pytorch writer for vectorized collection
+        # self.pointcloud_listener = self.PointcloudListener()
+        # self.pointcloud_writer = self.rep.WriterRegistry.get("PointcloudWriter")
+        # self.pointcloud_writer.initialize(listener=self.pointcloud_listener,
+        #                                   pcd_sampling_num=self._pcd_sampling_num,
+        #                                   pcd_normalize = self._pcd_normalization,
+        #                                   env_pos = self._env_pos.cpu(),
+        #                                   camera_positions=camera_positions,
+        #                                   camera_orientations=camera_rotations,
+        #                                   device=self.device,
+        #                                   )
+        # self.pointcloud_writer.attach(self.render_products)
             
         # # get robot semantic data
         # # 그런데 어짜피 로봇 point cloud는 필요 없기 때문에 안 받아도 될듯
@@ -282,27 +282,27 @@ class PCDMovingTargetTask(RLTask):
         #     self._robot_semantics[i].GetSemanticDataAttr().Set(f"robot_{i}")
         #     add_update_semantics(robot_prim, '0')
 
-        # get tool semantic data
-        self._tool_semantics = {}
-        for i in range(self._num_envs):
-            tool_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/robot/tool")
-            self._tool_semantics[i] = Semantics.SemanticsAPI.Apply(tool_prim, "Semantics")
-            self._tool_semantics[i].CreateSemanticTypeAttr()
-            self._tool_semantics[i].CreateSemanticDataAttr()
-            self._tool_semantics[i].GetSemanticTypeAttr().Set("class")
-            self._tool_semantics[i].GetSemanticDataAttr().Set(f"tool_{i}")
-            add_update_semantics(tool_prim, '1')    # added for fixing the order of semantic index
+        # # get tool semantic data
+        # self._tool_semantics = {}
+        # for i in range(self._num_envs):
+        #     tool_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/robot/tool")
+        #     self._tool_semantics[i] = Semantics.SemanticsAPI.Apply(tool_prim, "Semantics")
+        #     self._tool_semantics[i].CreateSemanticTypeAttr()
+        #     self._tool_semantics[i].CreateSemanticDataAttr()
+        #     self._tool_semantics[i].GetSemanticTypeAttr().Set("class")
+        #     self._tool_semantics[i].GetSemanticDataAttr().Set(f"tool_{i}")
+        #     add_update_semantics(tool_prim, '1')    # added for fixing the order of semantic index
 
-        # get target object semantic data
-        self._target_semantics = {}
-        for i in range(self._num_envs):
-            target_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/target")
-            self._target_semantics[i] = Semantics.SemanticsAPI.Apply(target_prim, "Semantics")
-            self._target_semantics[i].CreateSemanticTypeAttr()
-            self._target_semantics[i].CreateSemanticDataAttr()
-            self._target_semantics[i].GetSemanticTypeAttr().Set("class")
-            self._target_semantics[i].GetSemanticDataAttr().Set(f"target_{i}")
-            add_update_semantics(target_prim, '2')  # added for fixing the order of semantic index
+        # # get target object semantic data
+        # self._target_semantics = {}
+        # for i in range(self._num_envs):
+        #     target_prim = self.stage.GetPrimAtPath(f"/World/envs/env_{i}/target")
+        #     self._target_semantics[i] = Semantics.SemanticsAPI.Apply(target_prim, "Semantics")
+        #     self._target_semantics[i].CreateSemanticTypeAttr()
+        #     self._target_semantics[i].CreateSemanticDataAttr()
+        #     self._target_semantics[i].GetSemanticTypeAttr().Set("class")
+        #     self._target_semantics[i].GetSemanticDataAttr().Set(f"target_{i}")
+        #     add_update_semantics(target_prim, '2')  # added for fixing the order of semantic index
 
         self.init_data()
 
@@ -478,7 +478,7 @@ class PCDMovingTargetTask(RLTask):
     def get_observations(self) -> dict:
         ''' retrieve point cloud data from all render products '''
         # tasks/utils/pcd_writer.py 에서 pcd sample하고 tensor로 변환해서 가져옴
-        pointcloud = self.pointcloud_listener.get_pointcloud_data()
+        # pointcloud = self.pointcloud_listener.get_pointcloud_data()
 
         self.flange_pos, self.flange_rot = self._flanges.get_local_poses()
         self.goal_pos, _ = self._goals.get_local_poses()
