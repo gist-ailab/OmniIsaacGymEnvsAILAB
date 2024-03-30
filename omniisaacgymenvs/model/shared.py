@@ -37,7 +37,7 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
         # self.pcd_backbone = init_network(self.pcd_config, input_channels=0, output_channels=[])
         self.pcd_backbone = PointNet()
 
-        self.robot_state_num  = self.num_observations - pcd_sampling_num*3 - 3 # 3 is goal pos
+        self.robot_state_num  = self.num_observations - pcd_sampling_num*3 - 2 # 2 is goal pos xy
 
         self.robot_state_mlp = nn.Sequential(nn.Linear(self.robot_state_num, 64),
                                              nn.ReLU(),
@@ -50,7 +50,7 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
         #                          nn.Linear(128, 64),
         #                          nn.ELU())
         
-        self.net = nn.Sequential(nn.Linear(256 + 64 + 3, 64),  # 256: pcd feature, 64: robot state feat, 3: goal pos
+        self.net = nn.Sequential(nn.Linear(256 + 64 + 2, 64),  # 256: pcd feature, 64: robot state feat, 3: goal pos
                                  nn.ELU(),
                                  nn.Linear(64, 64),)
 
@@ -86,8 +86,8 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
 
         pcd_data = inputs["states"][:, :entire_pcd_num]    # [B, N*3]. flattened pcd data
         pcd_pos_data = pcd_data.view([pcd_data.shape[0], -1, 3])    # [B, N, 3], 3 is x, y, z
-        robot_state = inputs["states"][:, N*3:-3] # B, RS
-        goal_pos = inputs["states"][:, -3:] # B, 3
+        robot_state = inputs["states"][:, N*3:-2] # B, RS
+        goal_pos = inputs["states"][:, -2:] # B, 2
 
         # robot state feature extractor
         robot_state_feature = self.robot_state_mlp(robot_state)  # [B, F_RS]
@@ -96,7 +96,7 @@ class Shared(GaussianMixin, DeterministicMixin, Model):
         ########################################## PointNet from DexART ##########################################
         point_feature = self.pcd_backbone(pcd_pos_data)  # [B, N, F_PCD]
 
-        combined_features = torch.cat((point_feature, robot_state_feature, goal_pos), dim=1)  # [B, F_PCD+F_RS+3]
+        combined_features = torch.cat((point_feature, robot_state_feature, goal_pos), dim=1)  # [B, F_PCD+F_RS+2]
 
         ########################################## PointNet from DexART ##########################################
 

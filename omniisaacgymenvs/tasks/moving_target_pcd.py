@@ -70,6 +70,8 @@ class PCDMovingTargetTask(RLTask):
         self.tool_rot_z = 0     # 0 degree
         self.tool_rot_y = -1.5707 # -90 degree
 
+        self.target_height = 0.05
+
         # workspace 2D boundary
         # self.x_min = 0.45
         # self.x_max = 1.2
@@ -107,7 +109,7 @@ class PCDMovingTargetTask(RLTask):
 
         # observation and action space
         pcd_observations = self._pcd_sampling_num * self._num_pcd_masks * 3     # 2 is a number of point cloud masks and 3 is a cartesian coordinate
-        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 3
+        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 2
         '''
         refer to observations in get_observations()
         pcd_observations                              # [NE, 3*2*pcd_sampling_num]
@@ -115,7 +117,7 @@ class PCDMovingTargetTask(RLTask):
         dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
         flange_pos,                                   # [NE, 3]
         flange_rot,                                   # [NE, 4]
-        goal_pos,                                     # [NE, 3]
+        goal_pos_xy,                                  # [NE, 2]
         
         '''
 
@@ -347,7 +349,7 @@ class PCDMovingTargetTask(RLTask):
         target = DynamicCylinder(prim_path=self.default_zero_env_path + "/target",
                                  name="target",
                                  radius=0.04,
-                                 height=0.05,
+                                 height=self.target_height,
                                  density=1,
                                  color=torch.tensor([255, 0, 0]),
                                  mass=1,
@@ -481,7 +483,8 @@ class PCDMovingTargetTask(RLTask):
         # pointcloud = self.pointcloud_listener.get_pointcloud_data()
 
         self.flange_pos, self.flange_rot = self._flanges.get_local_poses()
-        self.goal_pos, _ = self._goals.get_local_poses()
+        # self.goal_pos, _ = self._goals.get_local_poses()
+        # self.goal_pos_xy = self.goal_pos[:, [0, 1]]
         target_pos, target_rot_quaternion = self._targets.get_local_poses()
         target_rot = quaternion_to_matrix(target_rot_quaternion)
         tool_pos, tool_rot_quaternion = self._tools.get_local_poses()
@@ -567,7 +570,8 @@ class PCDMovingTargetTask(RLTask):
 
 
 
-        self.target_pos_mean = torch.mean(target_pcd_transformed, dim=1)
+        target_pos_mean = torch.mean(target_pcd_transformed, dim=1)
+        self.target_pos_xy = target_pos_mean[:, [0, 1]]
 
 
         # ##### farthest point from the tool to the goal #####
@@ -645,7 +649,7 @@ class PCDMovingTargetTask(RLTask):
                                   dof_vel_scaled[:, :6],                        # [NE, 6]
                                   self.flange_pos,                                   # [NE, 3]
                                   self.flange_rot,                                   # [NE, 4]
-                                  self.goal_pos,                                     # [NE, 3]
+                                  self.goal_pos_xy,                                  # [NE, 2]
                                  ), dim=1)
         # self.obs_buf[:, 0] = self.progress_buf / self._max_episode_length
         # # 위에 있는게 꼭 들어가야 할까??? 없어도 될 것 같은데....
@@ -754,6 +758,9 @@ class PCDMovingTargetTask(RLTask):
         # goal_mark_pos = goal_mark_pos + rand
         # ### randomize goal position ###
         self._goals.set_world_poses(goal_mark_pos + self._env_pos[env_ids], indices=indices)
+        goal_pos = self._goals.get_local_poses()
+        self.goal_pos_xy = goal_pos[0][:, [0, 1]]
+
 
         # bookkeeping
         self.reset_buf[env_ids] = 0
@@ -776,7 +783,7 @@ class PCDMovingTargetTask(RLTask):
 
     def calculate_metrics(self) -> None:
         initialized_idx = self.progress_buf == 1
-        self.current_target_goal_distance = LA.norm(self.goal_pos - self.target_pos_mean, ord=2, dim=1)
+        self.current_target_goal_distance = LA.norm(self.goal_pos_xy - self.target_pos_xy, ord=2, dim=1)
         self.initial_target_goal_distance[initialized_idx] = self.current_target_goal_distance[initialized_idx]
 
         init_t_g_d = self.initial_target_goal_distance
@@ -806,11 +813,11 @@ class PCDMovingTargetTask(RLTask):
         reset = torch.where(self.flange_pos[:, 0] > self.x_max, ones, reset)
         reset = torch.where(self.flange_pos[:, 1] > self.y_max, ones, reset)
         reset = torch.where(self.flange_pos[:, 2] > 0.5, ones, reset)
-        reset = torch.where(self.target_pos_mean[:, 0] < self.x_min, ones, reset)
-        reset = torch.where(self.target_pos_mean[:, 1] < self.y_min, ones, reset)
-        reset = torch.where(self.target_pos_mean[:, 0] > self.x_max, ones, reset)
-        reset = torch.where(self.target_pos_mean[:, 1] > self.y_max, ones, reset)
-        reset = torch.where(self.target_pos_mean[:, 2] > 0.5, ones, reset)
+        reset = torch.where(self.target_pos_xy[:, 0] < self.x_min, ones, reset)
+        reset = torch.where(self.target_pos_xy[:, 1] < self.y_min, ones, reset)
+        reset = torch.where(self.target_pos_xy[:, 0] > self.x_max, ones, reset)
+        reset = torch.where(self.target_pos_xy[:, 1] > self.y_max, ones, reset)
+        # reset = torch.where(self.target_pos_xy[:, 2] > 0.5, ones, reset)
 
         # target reached
         reset = torch.where(self.current_target_goal_distance < 0.05, ones, reset)
