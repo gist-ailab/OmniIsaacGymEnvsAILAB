@@ -790,10 +790,10 @@ class PCDMovingTargetTask(RLTask):
         cur_t_g_d = self.current_target_goal_distance
         target_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d)
 
-        # self.completion_reward = torch.zeros(self._num_envs).to(self._device)
-        # self.completion_reward[self.current_tool_goal_distance <= 0.05] = 10.0
-        # self.rew_buf[:] = tool_goal_distance_reward + self.completion_reward
-        self.rew_buf[:] = target_goal_distance_reward    
+        self.completion_reward = torch.zeros(self._num_envs).to(self._device)
+        self.completion_reward[cur_t_g_d <= 0.05] = 100.0
+        self.rew_buf[:] = target_goal_distance_reward + self.completion_reward
+        # self.rew_buf[:] = target_goal_distance_reward    
         
         # 시간이 지나도 target이 움직이지 않으면 minus reward를 주어야 할 듯
 
