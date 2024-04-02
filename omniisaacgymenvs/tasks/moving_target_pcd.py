@@ -681,7 +681,7 @@ class PCDMovingTargetTask(RLTask):
                                                         current_position=self.flange_pos,
                                                         current_orientation=self.flange_rot,
                                                         goal_position=goal_position,
-                                                        goal_orientation=None
+                                                        goal_orientation=goal_orientation
                                                         )
             targets = self.robot_dof_targets[:, :6] + delta_dof_pos[:, :6]
 
@@ -723,18 +723,16 @@ class PCDMovingTargetTask(RLTask):
         # reset target
         position = torch.tensor(self._target_position, device=self._device)
         target_pos = position.repeat(len(env_ids),1)
-        # ### randomize target position ###
-        # # x, y randomize 는 ±0.1로 uniform random
-        # # z_ref = torch.abs(target_pos[2])
-        # z_ref = torch.unsqueeze(torch.abs(target_pos[:, 2]),1)
-        # # generate uniform random values for randomizing target position
-        # # reference: https://stackoverflow.com/questions/44328530/how-to-get-a-uniform-distribution-in-a-range-r1-r2-in-pytorch
-        # x_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.1, 0.1).to(device=self._device)
-        # y_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.1, 0.1).to(device=self._device)
-        # # z_rand = z_ref.repeat(len(env_ids),1)   ### Do not randomize z position
-        # rand = torch.cat((x_rand, y_rand, z_ref), dim=1)    ### Do not randomize z position
-        # target_pos = target_pos + rand
-        # ### randomize target position ###
+        ### randomize target position ###
+        # x, y randomize 는 ±0.1로 uniform random
+        # z_ref = torch.abs(target_pos[2])
+        z_ref = torch.unsqueeze(torch.abs(target_pos[:, 2]),1)
+        # generate uniform random values for randomizing target position
+        # reference: https://stackoverflow.com/questions/44328530/how-to-get-a-uniform-distribution-in-a-range-r1-r2-in-pytorch
+        x_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.65, 1.1).to(device=self._device)    # 0.85 ± 0.25
+        y_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.45, -0.15).to(device=self._device)  # -0.3 ± 0.15
+        target_pos = torch.cat((x_rand, y_rand, z_ref), dim=1) ### Do not randomize z position
+        ### randomize target position ###
 
         orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)
         target_ori = orientation.repeat(len(env_ids),1)
@@ -759,6 +757,7 @@ class PCDMovingTargetTask(RLTask):
         # ### randomize goal position ###
         self._goals.set_world_poses(goal_mark_pos + self._env_pos[env_ids], indices=indices)
         goal_pos = self._goals.get_local_poses()
+        
         self.goal_pos_xy = goal_pos[0][:, [0, 1]]
 
 
