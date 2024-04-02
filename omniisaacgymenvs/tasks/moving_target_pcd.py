@@ -77,8 +77,8 @@ class PCDMovingTargetTask(RLTask):
         # self.x_max = 1.2
         # self.y_min = -0.8
         # self.y_max = 0.4
-        self.x_min = 0.3
-        self.x_max = 0.9
+        self.x_min = 0.5
+        self.x_max = 1.1
         self.y_min = -0.6
         self.y_max = 0.6
         self.z_min = 0.1
@@ -674,7 +674,7 @@ class PCDMovingTargetTask(RLTask):
             targets = self.robot_dof_targets[:, :6] + self.robot_dof_speed_scales[:6] * self.dt * self.actions * self._action_scale
 
         elif self._control_space == "cartesian":
-            goal_position = self.flange_pos + self.actions[:, :3] / 50.0
+            goal_position = self.flange_pos + self.actions[:, :3] / 70.0
             goal_orientation = self.flange_rot + self.actions[:, 3:] / 70.0
             delta_dof_pos = omniverse_isaacgym_utils.ik(
                                                         jacobian_end_effector=self.jacobians[:, self._robots.body_names.index(self._flange_link)-1, :, :],
@@ -729,8 +729,8 @@ class PCDMovingTargetTask(RLTask):
         z_ref = torch.unsqueeze(torch.abs(target_pos[:, 2]),1)
         # generate uniform random values for randomizing target position
         # reference: https://stackoverflow.com/questions/44328530/how-to-get-a-uniform-distribution-in-a-range-r1-r2-in-pytorch
-        x_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.65, 1.1).to(device=self._device)    # 0.85 ± 0.25
-        y_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.45, -0.15).to(device=self._device)  # -0.3 ± 0.15
+        x_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.6, 1.0).to(device=self._device)    # 0.8 ± 0.2
+        y_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.3, -0.1).to(device=self._device)  # -0.2 ± 0.1
         target_pos = torch.cat((x_rand, y_rand, z_ref), dim=1) ### Do not randomize z position
         ### randomize target position ###
 
