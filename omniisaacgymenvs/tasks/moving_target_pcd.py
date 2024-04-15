@@ -77,10 +77,10 @@ class PCDMovingTargetTask(RLTask):
         # self.x_max = 1.2
         # self.y_min = -0.8
         # self.y_max = 0.4
-        self.x_min = 0.5
-        self.x_max = 1.1
-        self.y_min = -0.6
-        self.y_max = 0.6
+        self.x_min = 0.2
+        self.x_max = 1.2
+        self.y_min = -0.7
+        self.y_max = 0.7
         self.z_min = 0.1
         self.z_max = 0.7
 
@@ -380,7 +380,9 @@ class PCDMovingTargetTask(RLTask):
     def init_data(self) -> None:
         # self.robot_default_dof_pos = torch.tensor(np.radians([-40, -45, 60, -100, -90, 90.0,
         #                                                       0.0, 0.0, 0.0, 0.0]), device=self._device, dtype=torch.float32)
-        self.robot_default_dof_pos = torch.tensor(np.radians([-50, -40, 50, -100, -90, 130,
+        # self.robot_default_dof_pos = torch.tensor(np.radians([-50, -40, 50, -100, -90, 130,
+        #                                                       5, 70, 0.0, -90]), device=self._device, dtype=torch.float32)
+        self.robot_default_dof_pos = torch.tensor(np.radians([-60, -70, 90, -110, -90, 130,
                                                               5, 70, 0.0, -90]), device=self._device, dtype=torch.float32)
 
         self.actions = torch.zeros((self._num_envs, self.num_actions), device=self._device)
@@ -551,6 +553,7 @@ class PCDMovingTargetTask(RLTask):
         # T_o[:3, 3] = tgt_pos_np
         # tgt_coord = copy.deepcopy(base_coord).transform(T_o)
 
+        # self.goal_pos = self._goals.get_local_poses()
         # goal_pos_np = self.goal_pos[view_idx].cpu().numpy()
         # goal_cone = o3d.geometry.TriangleMesh.create_cone(radius=0.01, height=0.03)
         # goal_cone.paint_uniform_color([0, 1, 0])
@@ -558,12 +561,21 @@ class PCDMovingTargetTask(RLTask):
         # T_g_p[:3, 3] = goal_pos_np
         # goal_position = copy.deepcopy(goal_cone).transform(T_g_p)
 
+        # goal_pos_xy_np = copy.deepcopy(goal_pos_np)
+        # goal_pos_xy_np[0][2] = self.target_height
+        # goal_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+        # goal_sphere.paint_uniform_color([1, 0, 0])
+        # T_g = np.eye(4)
+        # T_g[:3, 3] = goal_pos_xy_np
+        # goal_position_xy = copy.deepcopy(goal_sphere).transform(T_g)
+
         # o3d.visualization.draw_geometries([base_coord,
         #                                    tool_transformed_point_cloud,
         #                                    tgt_transformed_point_cloud,
         #                                    tool_coord,
         #                                    tgt_coord,
-        #                                    goal_position,],
+        #                                    goal_position,
+        #                                    goal_position_xy],
         #                                     window_name=f'point cloud')
         ################# visualize point cloud #################
         #########################################################
@@ -724,14 +736,14 @@ class PCDMovingTargetTask(RLTask):
         position = torch.tensor(self._target_position, device=self._device)
         target_pos = position.repeat(len(env_ids),1)
         ### randomize target position ###
-        # x, y randomize 는 ±0.1로 uniform random
-        # z_ref = torch.abs(target_pos[2])
-        z_ref = torch.unsqueeze(torch.abs(target_pos[:, 2]),1)
-        # generate uniform random values for randomizing target position
-        # reference: https://stackoverflow.com/questions/44328530/how-to-get-a-uniform-distribution-in-a-range-r1-r2-in-pytorch
-        x_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.6, 1.0).to(device=self._device)    # 0.8 ± 0.2
-        y_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.3, -0.1).to(device=self._device)  # -0.2 ± 0.1
-        target_pos = torch.cat((x_rand, y_rand, z_ref), dim=1) ### Do not randomize z position
+        # # x, y randomize 는 ±0.1로 uniform random
+        # # z_ref = torch.abs(target_pos[2])
+        # z_ref = torch.unsqueeze(torch.abs(target_pos[:, 2]),1)
+        # # generate uniform random values for randomizing target position
+        # # reference: https://stackoverflow.com/questions/44328530/how-to-get-a-uniform-distribution-in-a-range-r1-r2-in-pytorch
+        # x_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.6, 1.0).to(device=self._device)    # 0.8 ± 0.2
+        # y_rand = torch.FloatTensor(len(env_ids), 1).uniform_(-0.3, -0.1).to(device=self._device)  # -0.2 ± 0.1
+        # target_pos = torch.cat((x_rand, y_rand, z_ref), dim=1) ### Do not randomize z position
         ### randomize target position ###
 
         orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)
