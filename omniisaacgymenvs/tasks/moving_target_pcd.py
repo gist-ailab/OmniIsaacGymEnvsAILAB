@@ -55,6 +55,8 @@ class PCDMovingTargetTask(RLTask):
         self._env = env
         
         self.initial_target_goal_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
+        self.initial_tool_target_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
+        self.stage1_reward = torch.zeros(self._num_envs).to(self._device)
         
         self.alpha = 0.15
         self.beta = 0.5
@@ -507,13 +509,22 @@ class PCDMovingTargetTask(RLTask):
         tool_pcd_transformed = transformed_points_homogeneous[..., :3]
         ##### point cloud registration for tool #####
 
+        # calculate farthest distance and idx from the tool to the goal
+        diff = tool_pcd_transformed - self.flange_pos[:, None, :]
+        distance = diff.norm(dim=2)  # [B, N]
+
+        # Find the index and value of the farthest point from the base coordinate
+        farthest_idx = distance.argmax(dim=1)  # [B]
+        # farthest_val = distance.gather(1, farthest_idx.unsqueeze(1)).squeeze(1)  # [B]
+        self.tool_end_point = tool_pcd_transformed.gather(1, farthest_idx.view(B, 1, 1).expand(B, 1, 3)).squeeze(1).squeeze(1)  # [B, 3]
+
 
         # get transformation matrix from base to target object
         T_base_to_tgt = torch.eye(4, device=self._device).unsqueeze(0).repeat(self._num_envs, 1, 1)
         T_base_to_tgt[:, :3, :3] = target_rot.clone().detach()
         T_base_to_tgt[:, :3, 3] = target_pos.clone().detach()
 
-        ##### point cloud registration for tool #####
+        ##### point cloud registration for target object #####
         B, N, _ = self.target_pcd.shape
         # Convert points to homogeneous coordinates by adding a dimension with ones
         homogeneous_points = torch.cat([self.target_pcd, torch.ones(B, N, 1, device=self.target_pcd.device)], dim=-1)
@@ -521,7 +532,7 @@ class PCDMovingTargetTask(RLTask):
         transformed_points_homogeneous = torch.bmm(homogeneous_points, T_base_to_tgt.transpose(1, 2))
         # Convert back from homogeneous coordinates by removing the last dimension
         target_pcd_transformed = transformed_points_homogeneous[..., :3]
-        ##### point cloud registration for tool #####
+        ##### point cloud registration for target object #####
 
 
         ##################### ####################################
@@ -542,6 +553,13 @@ class PCDMovingTargetTask(RLTask):
         # T_t[:3, 3] = tool_pos_np
         # tool_coord = copy.deepcopy(base_coord).transform(T_t)
 
+        # tool_end_point = o3d.geometry.TriangleMesh().create_sphere(radius=0.01)
+        # tool_end_point.paint_uniform_color([0, 0, 1])
+        # farthest_pt = tool_transformed_pcd_np[farthest_idx.detach().cpu().numpy()][view_idx]
+        # T_t_p = np.eye(4)
+        # T_t_p[:3, 3] = farthest_pt
+        # tool_tip_position = copy.deepcopy(tool_end_point).transform(T_t_p)
+
         # tgt_transformed_pcd_np = target_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
         # tgt_transformed_point_cloud = o3d.geometry.PointCloud()
         # tgt_transformed_point_cloud.points = o3d.utility.Vector3dVector(tgt_transformed_pcd_np)
@@ -553,7 +571,7 @@ class PCDMovingTargetTask(RLTask):
         # T_o[:3, 3] = tgt_pos_np
         # tgt_coord = copy.deepcopy(base_coord).transform(T_o)
 
-        # self.goal_pos = self._goals.get_local_poses()
+        # self.goal_pos, _ = self._goals.get_local_poses()
         # goal_pos_np = self.goal_pos[view_idx].cpu().numpy()
         # goal_cone = o3d.geometry.TriangleMesh.create_cone(radius=0.01, height=0.03)
         # goal_cone.paint_uniform_color([0, 1, 0])
@@ -562,7 +580,7 @@ class PCDMovingTargetTask(RLTask):
         # goal_position = copy.deepcopy(goal_cone).transform(T_g_p)
 
         # goal_pos_xy_np = copy.deepcopy(goal_pos_np)
-        # goal_pos_xy_np[0][2] = self.target_height
+        # goal_pos_xy_np[2] = self.target_height
         # goal_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
         # goal_sphere.paint_uniform_color([1, 0, 0])
         # T_g = np.eye(4)
@@ -572,6 +590,7 @@ class PCDMovingTargetTask(RLTask):
         # o3d.visualization.draw_geometries([base_coord,
         #                                    tool_transformed_point_cloud,
         #                                    tgt_transformed_point_cloud,
+        #                                    tool_tip_position,
         #                                    tool_coord,
         #                                    tgt_coord,
         #                                    goal_position,
@@ -582,8 +601,9 @@ class PCDMovingTargetTask(RLTask):
 
 
 
-        target_pos_mean = torch.mean(target_pcd_transformed, dim=1)
-        self.target_pos_xy = target_pos_mean[:, [0, 1]]
+        self.target_pos_xyz = torch.mean(target_pcd_transformed, dim=1)
+        self.target_pos_xy = self.target_pos_xyz[:, [0, 1]]
+
 
 
         # ##### farthest point from the tool to the goal #####
@@ -793,7 +813,24 @@ class PCDMovingTargetTask(RLTask):
         self.reset_idx(indices)
 
     def calculate_metrics(self) -> None:
-        initialized_idx = self.progress_buf == 1
+        initialized_idx = self.progress_buf == 1    # initialized index를 통해 progress_buf가 1인 경우에만 initial distance 계산
+
+        # Stage 1: make the tool go to behind the target
+        behind_target = copy.deepcopy(self.target_pos_xyz)
+        behind_target[:, 1] = behind_target[:, 1] - 0.1
+        # TODO: 추후에는 y값에서 일관되게 0.1을 빼주는 것이 아니라 goal position을 고려하여 수식적으로 계산되도록 해주자.
+        current_tool_target_distance = LA.norm(self.tool_end_point - behind_target, ord=2, dim=1)
+        self.initial_tool_target_distance[initialized_idx] = current_tool_target_distance[initialized_idx]
+
+        init_t_t_d = self.initial_tool_target_distance
+        cur_t_t_d = current_tool_target_distance
+        tool_target_distance_reward = self.relu(-(cur_t_t_d - init_t_t_d)/init_t_t_d)
+
+        self.stage1_reward[cur_t_t_d > 0.05] = tool_target_distance_reward[cur_t_t_d > 0.05]
+        self.stage1_reward[cur_t_t_d <= 0.05] = 1.0
+
+        # Stage 2 reward
+        # progress_buf가 1인, 초기 상태의 target-goal distance 계산하고 이후 계산에 사용
         self.current_target_goal_distance = LA.norm(self.goal_pos_xy - self.target_pos_xy, ord=2, dim=1)
         self.initial_target_goal_distance[initialized_idx] = self.current_target_goal_distance[initialized_idx]
 
@@ -801,10 +838,17 @@ class PCDMovingTargetTask(RLTask):
         cur_t_g_d = self.current_target_goal_distance
         target_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d)
 
-        self.completion_reward = torch.zeros(self._num_envs).to(self._device)
-        self.completion_reward[cur_t_g_d <= 0.05] = 100.0
-        self.rew_buf[:] = target_goal_distance_reward + self.completion_reward
-        # self.rew_buf[:] = target_goal_distance_reward    
+        # completion reward
+        completion_reward = torch.zeros(self._num_envs).to(self._device)
+        completion_reward[cur_t_g_d <= 0.05] = 100.0
+
+        stage2_reward = target_goal_distance_reward + completion_reward
+
+        total_reward = torch.where(self.stage1_reward < 1.0, self.stage1_reward, stage2_reward)
+
+        # self.rew_buf[:] = target_goal_distance_reward + completion_reward
+        # self.rew_buf[:] = target_goal_distance_reward
+        self.rew_buf[:] = total_reward
         
         # 시간이 지나도 target이 움직이지 않으면 minus reward를 주어야 할 듯
 
