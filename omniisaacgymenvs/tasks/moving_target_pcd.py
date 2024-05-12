@@ -815,6 +815,7 @@ class PCDMovingTargetTask(RLTask):
 
     def calculate_metrics(self) -> None:
         initialized_idx = self.progress_buf == 1    # initialized index를 통해 progress_buf가 1인 경우에만 initial distance 계산
+        #  TODO: progress에 따른 panalty 추가 
 
         # Stage 1: make the tool go to behind the target
         behind_target = copy.deepcopy(self.target_pos_xyz)
@@ -825,10 +826,13 @@ class PCDMovingTargetTask(RLTask):
 
         init_t_t_d = self.initial_tool_target_distance
         cur_t_t_d = current_tool_target_distance
-        tool_target_distance_reward = self.relu(-(cur_t_t_d - init_t_t_d)/init_t_t_d)
+        # tool_target_distance_reward = self.relu(-(cur_t_t_d - init_t_t_d)/init_t_t_d)
+        tool_target_distance_reward = -1/init_t_t_d * cur_t_t_d
 
-        stage1_mask = cur_t_t_d > 0.1
+        # stage1_mask = cur_t_t_d > 0.1
+        stage1_mask = cur_t_t_d > 0.07
         self.stage1_reward = torch.where(stage1_mask, tool_target_distance_reward, torch.zeros_like(tool_target_distance_reward))
+        # self.stage1_reward = self.stage1_reward -0.05 * self.progress_buf
         # TODO: 일단 stage1을 만족한 다음에는 tool-target distacne가 더 커져도 상관없어야 하지 않나??
 
         # Stage 2 reward
@@ -841,10 +845,11 @@ class PCDMovingTargetTask(RLTask):
         # 물체와 goal 사이의 reward를 더 신경쓰게끔 2배로 reward scale up
 
         # completion reward
-        completion_reward = torch.where(cur_t_g_d <= 0.05, torch.full_like(cur_t_g_d, 100.0), torch.zeros_like(cur_t_g_d))
+        completion_reward = torch.where(cur_t_g_d <= 0.1, torch.full_like(cur_t_g_d, 100.0), torch.zeros_like(cur_t_g_d))
 
         stage2_reward = target_goal_distance_reward + completion_reward
 
+        # total_reward = torch.where(stage1_mask, self.stage1_reward, stage2_reward) - 0.01 * self.progress_buf
         total_reward = torch.where(stage1_mask, self.stage1_reward, stage2_reward)
 
         # self.rew_buf[:] = target_goal_distance_reward + completion_reward
@@ -852,39 +857,6 @@ class PCDMovingTargetTask(RLTask):
         self.rew_buf[:] = total_reward
           
         # 시간이 지나도 target이 움직이지 않으면 minus reward를 주어야 할 듯
-
-    # def _calculate_distance_metric(self, pos1, pos2, init_idx):
-    #     current_distance = LA.norm(pos1 - pos2, ord=2, dim=1)
-    #     self.initial_distance[init_idx] = current_distance[init_idx]
-    #     distance_reward = self.relu(-(current_distance - self.initial_distance) / self.initial_distance)
-    #     pass
-
-    # def _stage1_reward(self, initialized_idx):
-    #     behind_target = copy.deepcopy(self.target_pos_xyz)
-    #     behind_target[:, 1] = behind_target[:,  1] - 0.1
-    #     # TODO: 추후에는 y값에서 일관되게 0.1을 빼주는 것이 아니라 goal position을 고려하여 수식적으로 계산되도록 해주자.
-    #     current_tool_target_distance = LA.norm(self.tool_end_point - behind_target, ord=2, dim=1)
-    #     self.initial_tool_target_distance[initialized_idx] = current_tool_target_distance[initialized_idx]
-
-    #     init_t_t_d = self.initial_tool_target_distance
-    #     cur_t_t_d = current_tool_target_distance
-    #     tool_target_distance_reward = self.relu(-(cur_t_t_d - init_t_t_d)/init_t_t_d)
-
-    #     self.stage1_reward[cur_t_t_d > 0.1] = tool_target_distance_reward[cur_t_t_d > 0.1]
-    #     self.stage1_reward[cur_t_t_d <= 0.1] = 1.0
-
-    #     return self.stage1_reward
-        
-
-    # def _stage2_reward(self, initialized_idx):
-    #     self.current_target_goal_distance = LA.norm(self.goal_pos_xy - self.target_pos_xy, ord=2, dim=1)
-    #     self.initial_target_goal_distance[initialized_idx] = self.current_target_goal_distance[initialized_idx]
-
-    #     init_t_g_d = self.initial_target_goal_distance
-    #     cur_t_g_d = self.current_target_goal_distance
-    #     target_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d)
-
-    #     return target_goal_distance_reward
     
 
     def is_done(self) -> None:
