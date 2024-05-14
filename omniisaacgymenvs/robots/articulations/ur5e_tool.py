@@ -44,10 +44,10 @@ class UR5eTool(Robot):
         self._orientation = torch.tensor([1.0, 0.0, 0.0, 0.0]) if orientation is None else orientation
 
         if self._usd_path is None:
-            isaac_root_path = os.path.join(os.path.expanduser('~'), ".local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/")
+            isaac_root_path = os.path.join(os.path.expanduser('~'), ".local/share/ov/pkg/isaac_sim-2023.1.1")
             if isaac_root_path is None:
                 carb.log_error("Could not find Isaac Sim assets folder")
-            self._usd_path = isaac_root_path + "OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/ur5e_tool.usd"
+            self._usd_path = isaac_root_path + "/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/ur5e_tool.usd"
             # self._usd_path = isaac_root_path + "OmniIsaacGymEnvsAILAB/omniisaacgymenvs/skrl_examples/moving_target_point_cloud/ur5e/usd/ur5e_tool_wo_rigidbody.usd"
 
         add_reference_to_stage(self._usd_path, prim_path)
@@ -89,7 +89,7 @@ class UR5eTool(Robot):
         max_velocity = [math.degrees(x) for x in [2.175, 2.175, 2.175, 2.61, 2.61, 2.61,
                                                 #   2.61, 2.61, 2.61, 2.61]]
                                                   0, 0, 0, 0]]
-
+        # '/World/envs/env_0/robot/ure/base_link/shoulder_pan_joint'
         for i, dof in enumerate(dof_paths):
             if i > 6: continue
             set_drive(
