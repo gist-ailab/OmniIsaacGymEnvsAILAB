@@ -58,11 +58,17 @@ recording_fps: 30
 # directory to save recordings in
 recording_dir: ''
 
-wandb_activate: False
-wandb_group: ''
+# WandB
+# wandb_activate: False
+# wandb_group: ''
+# wandb_name: ${train.params.config.name}
+# wandb_entity: ''
+# wandb_project: 'omniisaacgymenvs'
+wandb_activate: True
+wandb_group: None
 wandb_name: ${train.params.config.name}
-wandb_entity: ''
-wandb_project: 'omniisaacgymenvs'
+wandb_entity: 'psh9002'
+wandb_project: 'ToolMani'
 
 # path to a kit app file
 kit_app: ''
