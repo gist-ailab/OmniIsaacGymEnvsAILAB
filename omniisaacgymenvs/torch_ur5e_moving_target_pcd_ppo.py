@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import gym
 import numpy as np
 from datetime import datetime
 
@@ -74,14 +73,20 @@ cfg["value_preprocessor"] = RunningStandardScaler
 cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
 
 # logging to TensorBoard and write checkpoints (in timesteps)
-cfg["experiment"]["write_interval"] = 120
-cfg["experiment"]["checkpoint_interval"] = 1000
+cfg["experiment"]["write_interval"] = 100
+cfg["experiment"]["checkpoint_interval"] = 500
 
 now = datetime.now()
 formatted_date = now.strftime("%y%m%d_%H%M%S")
 cfg["experiment"]["experiment_name"] = f"{formatted_date}_PCD_Moving_Target"
 
 cfg["experiment"]["directory"] = "runs/torch/PCDMovingTarget"
+cfg["experiment"]["checkpoint_dir"] = "checkpoints"
+
+cfg["experiment"]["wandb"] = True
+cfg["experiment"]["wandb_kwargs"] = {
+    "project": "ToolMani",
+}
 
 agent = PPO(models=models,
             memory=memory,
@@ -99,10 +104,6 @@ trainer = SequentialTrainer(cfg=cfg_trainer, env=env, agents=agent)
 # start training
 trainer.train()
 
-# # start evaluation
-# trainer.eval()
-
-
 # # ---------------------------------------------------------
 # # comment the code above: `trainer.train()`, and...
 # # uncomment the following lines to evaluate a trained agent
@@ -110,7 +111,8 @@ trainer.train()
 # from skrl.utils.huggingface import download_model_from_huggingface
 
 # # download the trained agent's checkpoint from Hugging Face Hub and load it
-# path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-FrankaCabinet-PPO", filename="agent.pt")
+# # path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-FrankaCabinet-PPO", filename="agent.pt")
+# path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/PCDMovingTarget/240514_232756_PCD_Moving_Target/checkpoints/agent_31500.pt'
 # agent.load(path)
 
 # # start evaluation
