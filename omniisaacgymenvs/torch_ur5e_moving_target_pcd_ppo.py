@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+import os
 from datetime import datetime
 
 # import the skrl components to build the RL system
@@ -14,6 +15,8 @@ from skrl.resources.preprocessors.torch import RunningStandardScaler
 from skrl.resources.schedulers.torch import KLAdaptiveRL
 from skrl.trainers.torch import SequentialTrainer
 from skrl.utils import set_seed
+
+import wandb
 
 # from omniisaacgymenvs.model.shared_transformer import SharedTransformerEnc
 from omniisaacgymenvs.model.shared import Shared
@@ -86,6 +89,7 @@ cfg["experiment"]["checkpoint_dir"] = "checkpoints"
 cfg["experiment"]["wandb"] = True
 cfg["experiment"]["wandb_kwargs"] = {
     "project": "ToolMani",
+    "save_code": True,
 }
 
 agent = PPO(models=models,
@@ -101,8 +105,21 @@ agent = PPO(models=models,
 cfg_trainer = {"timesteps": 50000, "headless": False}
 trainer = SequentialTrainer(cfg=cfg_trainer, env=env, agents=agent)
 
+if cfg["experiment"]["wandb_kwargs"]["save_code"]:
+    wandb.save('/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/tasks/moving_target_pcd.py')
+
 # start training
 trainer.train()
+
+if cfg["experiment"]["wandb_kwargs"]["save_code"]:
+    pth_path = os.path.join(cfg["experiment"]["directory"], cfg["experiment"]["experiment_name"])
+    wandb.save(f'{pth_path}/checkpoints/best_agent.pt')
+    '''
+    학습 중간에 저장하고 싶으면
+    /home/bak/anaconda3/envs/isaac-sim/lib/python3.10/site-packages/skrl/trainers/torch/base.py
+    위의 post-interaction 뒤에 저장해야 한다.
+    post-interaction 구현은 /home/bak/anaconda3/envs/isaac-sim/lib/python3.10/site-packages/skrl/agents/torch/base.py에 있음       
+    '''
 
 # # ---------------------------------------------------------
 # # comment the code above: `trainer.train()`, and...
