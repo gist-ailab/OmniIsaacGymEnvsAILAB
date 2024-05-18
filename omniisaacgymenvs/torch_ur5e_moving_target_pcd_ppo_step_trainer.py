@@ -95,6 +95,7 @@ cfg["experiment"]["wandb_kwargs"] = {
     # "sync_tensorboard": True,
     "name": f"{formatted_date}_PCD_Moving_Target_train",
     "tags": 't',
+    "reinit": True
 }
 
 agent = PPO(models=models,
