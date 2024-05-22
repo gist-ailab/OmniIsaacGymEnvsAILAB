@@ -3,6 +3,7 @@ from torch import linalg as LA
 import numpy as np
 import cv2
 from gym import spaces
+from copy import deepcopy
  
 from omni.isaac.core.utils.extensions import enable_extension
 enable_extension("omni.replicator.isaac")   # required by PytorchListener
@@ -16,7 +17,7 @@ from omniisaacgymenvs.tasks.utils.pcd_listener import PointcloudListener
 from omni.isaac.core.utils.semantics import add_update_semantics
 
 import omni
-from omni.isaac.core.prims import RigidPrimView
+from omni.isaac.core.prims import RigidPrimView, RigidContactView
 from omni.isaac.core.objects import DynamicCylinder, DynamicCone, DynamicSphere, DynamicCuboid
 from omni.isaac.core.utils.prims import get_prim_at_path, is_prim_path_valid
 from omni.isaac.core.materials.physics_material import PhysicsMaterial
@@ -54,19 +55,23 @@ class PCDMovingTargetTask(RLTask):
         self.dt = 1 / 120.0
         self._env = env
         
-        self.initial_target_goal_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
+        self.initial_tool_approach_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
         self.initial_tool_target_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
-        self.stage1_reward = torch.zeros(self._num_envs).to(self.cfg["rl_device"])
-        self.stage2_reward = torch.zeros(self._num_envs).to(self.cfg["rl_device"])
+        self.initial_target_goal_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
+        self.completion_reward = torch.zeros(self._num_envs).to(self.cfg["rl_device"])
+
+        self.alpha = 0.1
+        self.beta = 0.3
+        self.gamma = 1
         
-        self.alpha = 0.15
-        self.beta = 0.5
-        self.gamma = 0
-        self.zeta = 0.1
-        self.eta = 0.25
         self.relu = torch.nn.ReLU()
 
-        self.stage = torch.ones(self._num_envs).to(self.cfg["rl_device"])
+        # self.stage1_satisfied = torch.ones(self._num_envs).to(self.cfg["rl_device"])
+        self.stage1_satisfied = torch.zeros(self._num_envs, dtype=torch.bool).to(self.cfg["rl_device"])
+        self.stage2_satisfied = torch.zeros(self._num_envs, dtype=torch.bool).to(self.cfg["rl_device"])
+        self.stage_buf = torch.zeros(self._num_envs, dtype=int).to(self.cfg["rl_device"])
+        self.previous_tool_approach_distance = None
+        
 
         # tool orientation
         self.tool_rot_x = 1.221 # 70 degree
@@ -600,23 +605,8 @@ class PCDMovingTargetTask(RLTask):
         ################# visualize point cloud #################
         #########################################################
 
-
-
         self.target_pos_xyz = torch.mean(target_pcd_transformed, dim=1)
         self.target_pos_xy = self.target_pos_xyz[:, [0, 1]]
-
-
-
-        # ##### farthest point from the tool to the goal #####
-        # # calculate farthest distance and idx from the tool to the goal
-        # diff = points_transformed - self.flange_pos[:, None, :]
-        # distance = diff.norm(dim=2)  # [B, N]
-
-        # # Find the index and value of the farthest point from the base coordinate
-        # farthest_idx = distance.argmax(dim=1)  # [B]
-        # # farthest_val = distance.gather(1, farthest_idx.unsqueeze(1)).squeeze(1)  # [B]
-        # self.tool_end_point = points_transformed.gather(1, farthest_idx.view(B, 1, 1).expand(B, 1, 3)).squeeze(1).squeeze(1)  # [B, 3]
-        # ##### farthest point from the tool to the goal #####
 
         '''
         아래 순서로 최종 obs_buf에 concat. 첫 차원은 환경 갯수
@@ -814,49 +804,68 @@ class PCDMovingTargetTask(RLTask):
         self.reset_idx(indices)
 
     def calculate_metrics(self) -> None:
+        self.stage_buf[self.progress_buf ==1] = 0   # also initializing stage_buf to 0 when progress_buf is 1.
         initialized_idx = self.progress_buf == 1    # initialized index를 통해 progress_buf가 1인 경우에만 initial distance 계산
-        #  TODO: progress에 따른 panalty 추가 
+        self.completion_reward[:] = 0.0 # reset completion reward
 
-        # Stage 1: make the tool go to behind the target
+        # Stage 0: make the tool go to behind the target
         behind_target = copy.deepcopy(self.target_pos_xyz)
-        behind_target[:, 1] = behind_target[:,  1] - 0.1
+        behind_target[:, 1] -= 0.1
         # TODO: 추후에는 y값에서 일관되게 0.1을 빼주는 것이 아니라 goal position을 고려하여 수식적으로 계산되도록 해주자.
-        current_tool_target_distance = LA.norm(self.tool_end_point - behind_target, ord=2, dim=1)
-        self.initial_tool_target_distance[initialized_idx] = current_tool_target_distance[initialized_idx]
+        current_tool_approach_distance = LA.norm(self.tool_end_point - behind_target, ord=2, dim=1)
+        current_tool_target_distance = LA.norm(self.tool_end_point - self.target_pos_xyz, ord=2, dim=1)
+        self.initial_tool_approach_distance[initialized_idx] = current_tool_approach_distance[initialized_idx]
+        self.initial_tool_target_distance[initialized_idx] = current_tool_target_distance[initialized_idx]  # 초기화 시점의 tool-target distance
 
-        init_t_t_d = self.initial_tool_target_distance
+        init_t_a_d = self.initial_tool_approach_distance
+        cur_t_a_d = current_tool_approach_distance
+        approach_threshold = 0.05
+
+        tool_approach_distance_reward = self.relu(-(cur_t_a_d - init_t_a_d)/init_t_a_d)
+        
+
+        # Update stage_buf and store target position for Stage 1
+        stage1_satisfied = (self.stage_buf == 0) & (cur_t_a_d <= approach_threshold)
+        self.stage_buf[stage1_satisfied] = 1
+        # self.stage1_target_pos[stage1_satisfied] = self.target_pos_xyz[stage1_satisfied]
+
+
+        # Stage 1: tool touching the target
+        touching_threshold = 0.005 # Define a threshold for the tool touching the target
+        current_target_goal_distance = LA.norm(self.goal_pos_xy - self.target_pos_xy, ord=2, dim=1)
+        self.initial_target_goal_distance[stage1_satisfied] = current_target_goal_distance[stage1_satisfied]
+        self.initial_tool_target_distance[stage1_satisfied] = current_tool_target_distance[stage1_satisfied]    # reward function에서 사용하기 위해 다시 초기화하여 저장
+
         cur_t_t_d = current_tool_target_distance
-        # tool_target_distance_reward = self.relu(-(cur_t_t_d - init_t_t_d)/init_t_t_d)
-        tool_target_distance_reward = -1/init_t_t_d * cur_t_t_d
-
-        # stage1_mask = cur_t_t_d > 0.1
-        stage1_mask = cur_t_t_d > 0.07
-        self.stage1_reward = torch.where(stage1_mask, tool_target_distance_reward, torch.zeros_like(tool_target_distance_reward))
-        # self.stage1_reward = self.stage1_reward -0.05 * self.progress_buf
-        # TODO: 일단 stage1을 만족한 다음에는 tool-target distacne가 더 커져도 상관없어야 하지 않나??
-
-        # Stage 2 reward
-        self.current_target_goal_distance = LA.norm(self.goal_pos_xy - self.target_pos_xy, ord=2, dim=1)
-        self.initial_target_goal_distance[initialized_idx] = self.current_target_goal_distance[initialized_idx]
-
+        cur_t_g_d = current_target_goal_distance
+        init_t_t_d = self.initial_tool_target_distance
         init_t_g_d = self.initial_target_goal_distance
-        cur_t_g_d = self.current_target_goal_distance
-        target_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d) * 2
-        # 물체와 goal 사이의 reward를 더 신경쓰게끔 2배로 reward scale up
+        
+        tool_target_distance_reward = self.relu(-(cur_t_t_d - init_t_t_d)/init_t_t_d) + self.alpha
+        stage2_satisfied = (self.stage_buf == 1) & ((cur_t_g_d-init_t_g_d) > touching_threshold)
+        self.stage_buf[stage2_satisfied] = 2
+
+        # Stage 2: target reaching the goal
+        target_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d) + self.alpha + self.beta
 
         # completion reward
-        completion_reward = torch.where(cur_t_g_d <= 0.1, torch.full_like(cur_t_g_d, 100.0), torch.zeros_like(cur_t_g_d))
+        self.done_envs = cur_t_g_d <= 0.1
+        # completion_reward = torch.where(self.done_envs, torch.full_like(cur_t_g_d, 100.0)[self.done_envs], torch.zeros_like(cur_t_g_d))
+        self.completion_reward[self.done_envs] = torch.full_like(cur_t_g_d, 100.0)[self.done_envs]
 
-        stage2_reward = target_goal_distance_reward + completion_reward
+        stage3_satisfied = (self.stage_buf == 2) & self.done_envs
 
-        # total_reward = torch.where(stage1_mask, self.stage1_reward, stage2_reward) - 0.01 * self.progress_buf
-        total_reward = torch.where(stage1_mask, self.stage1_reward, stage2_reward)
 
-        # self.rew_buf[:] = target_goal_distance_reward + completion_reward
-        # self.rew_buf[:] = target_goal_distance_reward
+        # Combine rewards based on the stages
+        total_reward = torch.where(self.stage_buf==0,
+                                   self.alpha * tool_approach_distance_reward,
+                                   torch.where(self.stage_buf==1,
+                                               self.beta * tool_target_distance_reward,
+                                               self.gamma * target_goal_distance_reward + self.completion_reward))
+        
+        self.stage_buf[stage3_satisfied] = 0
+
         self.rew_buf[:] = total_reward
-          
-        # 시간이 지나도 target이 움직이지 않으면 minus reward를 주어야 할 듯
     
 
     def is_done(self) -> None:
@@ -876,7 +885,7 @@ class PCDMovingTargetTask(RLTask):
         # reset = torch.where(self.target_pos_xy[:, 2] > 0.5, ones, reset)
 
         # target reached
-        reset = torch.where(self.current_target_goal_distance < 0.05, ones, reset)
+        reset = torch.where(self.done_envs, ones, reset)
 
         # max episode length
         self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, ones, reset)
