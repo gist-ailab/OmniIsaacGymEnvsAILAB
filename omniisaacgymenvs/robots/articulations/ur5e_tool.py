@@ -71,24 +71,25 @@ class UR5eTool(Robot):
             "flange_tool_rot_x/flange_revolute_x",
             "flange_tool_rot_z/flange_revolute_z",
             "flange_tool_rot_y/flange_revolute_y",
+            "flange_tool_tran_y/flange_prismatic_y",
         ]
 
 
-        drive_type = ["angular"] * 6 + ["linear"] + ["angular"] * 3
+        drive_type = ["angular"] * 6 + ["linear"] + ["angular"] * 3 + ["linear"]
         # default_dof_pos = [math.degrees(x) for x in [0.0, -1.75, 1.05, -1.57, -1.57, 1.57,
         #                                              0.0, 0.0, 0.0, 0.0]]
         default_dof_pos = [-50, -40, 50, -100, -90, 130,
-                            5, 70, 0.0, -90]
+                            0.1, 70, 0.0, -90]
         stiffness = [400*np.pi/180] * 6
-        stiffness.extend([1000] * 4)
+        stiffness.extend([1000000] * 5)    # stiffness for grasped tool
         damping = [80*np.pi/180] * 6
-        damping.extend([10000] * 4)
+        damping.extend([100000] * 4)   # damping for grasped tool
         max_force = [87, 87, 87, 12, 12, 12,
-                     100, 100, 100, 100]
+                     100, 100, 100, 100, 100]
                     #  0, 0, 0, 0]
         max_velocity = [math.degrees(x) for x in [2.175, 2.175, 2.175, 2.61, 2.61, 2.61,
                                                 #   2.61, 2.61, 2.61, 2.61]]
-                                                  0, 0, 0, 0]]
+                                                  0, 0, 0, 0, 0]]
         # '/World/envs/env_0/robot/ure/base_link/shoulder_pan_joint'
         for i, dof in enumerate(dof_paths):
             if i > 6: continue
