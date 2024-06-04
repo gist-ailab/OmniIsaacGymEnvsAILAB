@@ -391,7 +391,7 @@ class PCDMovingTargetTask(RLTask):
         # self.robot_default_dof_pos = torch.tensor(np.radians([-50, -40, 50, -100, -90, 130,
         #                                                       5, 70, 0.0, -90]), device=self._device, dtype=torch.float32)
         self.robot_default_dof_pos = torch.tensor(np.radians([-60, -70, 90, -110, -90, 130,
-                                                              5, 70, 0.0, -90]), device=self._device, dtype=torch.float32)
+                                                              5, 70, 0.0, -90, 0]), device=self._device, dtype=torch.float32)
 
         self.actions = torch.zeros((self._num_envs, self.num_actions), device=self._device)
 
@@ -724,25 +724,6 @@ class PCDMovingTargetTask(RLTask):
         # episode 끝나고 env ids를 받아서 reset
         indices = env_ids.to(dtype=torch.int32)
 
-        # reset robot
-        pos = self.robot_default_dof_pos.unsqueeze(0).repeat(len(env_ids), 1)   # non-randomized
-        # ##### randomize robot pose #####
-        # randomize_manipulator_pos = 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs-4), device=self._device) - 0.5)
-        # # tool_pos = torch.zeros((len(env_ids), 4), device=self._device)  # 여기에 rand를 추가
-        # ### TODO: 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. pre_physics_step도 확인할 것
-        # pos[:, 0:6] = pos[:, 0:6] + randomize_manipulator_pos
-        # ##### randomize robot pose #####        
-        
-        dof_pos = torch.zeros((len(indices), self._robots.num_dof), device=self._device)
-        dof_pos[:, :] = pos
-        dof_vel = torch.zeros((len(indices), self._robots.num_dof), device=self._device)
-        self.robot_dof_targets[env_ids, :] = pos
-        self.robot_dof_pos[env_ids, :] = pos
-
-        self._robots.set_joint_positions(dof_pos, indices=indices)
-        self._robots.set_joint_position_targets(self.robot_dof_targets[env_ids], indices=indices)
-        self._robots.set_joint_velocities(dof_vel, indices=indices)
-
         # reset target
         position = torch.tensor(self._target_position, device=self._device)
         target_pos = position.repeat(len(env_ids),1)
@@ -764,6 +745,7 @@ class PCDMovingTargetTask(RLTask):
                                       indices=indices)
         # self._targets.enable_rigid_body_physics()
 
+
         # reset goal
         goal_mark_pos = torch.tensor(self._goal_mark, device=self._device)
         goal_mark_pos = goal_mark_pos.repeat(len(env_ids),1)
@@ -782,6 +764,33 @@ class PCDMovingTargetTask(RLTask):
         goal_pos = self._goals.get_local_poses()
         
         self.goal_pos_xy = goal_pos[0][:, [0, 1]]
+
+
+        # reset robot
+        pos = self.robot_default_dof_pos.unsqueeze(0).repeat(len(env_ids), 1)   # non-randomized
+        # ##### randomize robot pose #####
+        # randomize_manipulator_pos = 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs-4), device=self._device) - 0.5)
+        # # tool_pos = torch.zeros((len(env_ids), 4), device=self._device)  # 여기에 rand를 추가
+        # ### TODO: 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. pre_physics_step도 확인할 것
+        # pos[:, 0:6] = pos[:, 0:6] + randomize_manipulator_pos
+        # ##### randomize robot pose #####        
+
+        '''아래 부분에 dof pos를 ik를 이용해 풀면 될듯'''
+
+        # ee_goal_position
+        # ee_goal_orientation
+
+
+        dof_pos = torch.zeros((len(indices), self._robots.num_dof), device=self._device)
+        dof_pos[:, :] = pos
+        dof_vel = torch.zeros((len(indices), self._robots.num_dof), device=self._device)
+        self.robot_dof_targets[env_ids, :] = pos
+        self.robot_dof_pos[env_ids, :] = pos
+
+        self._robots.set_joint_positions(dof_pos, indices=indices)
+        self._robots.set_joint_position_targets(self.robot_dof_targets[env_ids], indices=indices)
+        self._robots.set_joint_velocities(dof_vel, indices=indices)
+
 
 
         # bookkeeping
@@ -823,7 +832,6 @@ class PCDMovingTargetTask(RLTask):
 
         tool_approach_distance_reward = self.relu(-(cur_t_a_d - init_t_a_d)/init_t_a_d)
         
-
         # Update stage_buf and store target position for Stage 1
         stage1_satisfied = (self.stage_buf == 0) & (cur_t_a_d <= approach_threshold)
         self.stage_buf[stage1_satisfied] = 1
@@ -841,12 +849,12 @@ class PCDMovingTargetTask(RLTask):
         init_t_t_d = self.initial_tool_target_distance
         init_t_g_d = self.initial_target_goal_distance
         
-        tool_target_distance_reward = self.relu(-(cur_t_t_d - init_t_t_d)/init_t_t_d) + self.alpha
+        tool_target_distance_reward = self.relu(-(cur_t_t_d - init_t_t_d)/init_t_t_d)
         stage2_satisfied = (self.stage_buf == 1) & ((cur_t_g_d-init_t_g_d) > touching_threshold)
         self.stage_buf[stage2_satisfied] = 2
 
         # Stage 2: target reaching the goal
-        target_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d) + self.alpha + self.beta
+        target_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d)
 
         # completion reward
         self.done_envs = cur_t_g_d <= 0.1
@@ -855,13 +863,12 @@ class PCDMovingTargetTask(RLTask):
 
         stage3_satisfied = (self.stage_buf == 2) & self.done_envs
 
-
         # Combine rewards based on the stages
         total_reward = torch.where(self.stage_buf==0,
                                    self.alpha * tool_approach_distance_reward,
                                    torch.where(self.stage_buf==1,
-                                               self.beta * tool_target_distance_reward,
-                                               self.gamma * target_goal_distance_reward + self.completion_reward))
+                                               self.beta * tool_target_distance_reward + self.alpha,
+                                               self.gamma * target_goal_distance_reward + self.alpha + self.beta + self.completion_reward))
         
         self.stage_buf[stage3_satisfied] = 0
 
