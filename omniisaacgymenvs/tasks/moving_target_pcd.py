@@ -136,7 +136,7 @@ class PCDMovingTargetTask(RLTask):
         else:
             raise ValueError("Invalid control space: {}".format(self._control_space))
 
-        self._flange_link = "flange_tool_rot_x"
+        self._flange_link = "flange"
 
         # ############################################################ BSH
         # # use multi-dimensional observation for camera RGB => 이거 쓰면 오류남
@@ -722,7 +722,7 @@ class PCDMovingTargetTask(RLTask):
 
     def reset_idx(self, env_ids) -> None:
         # episode 끝나고 env ids를 받아서 reset
-        indices = env_ids.to(dtype=torch.int32)
+        env_ids = env_ids.to(dtype=torch.int32)
 
         # reset target
         position = torch.tensor(self._target_position, device=self._device)
@@ -742,7 +742,7 @@ class PCDMovingTargetTask(RLTask):
         target_ori = orientation.repeat(len(env_ids),1)
         self._targets.set_world_poses(target_pos + self._env_pos[env_ids],
                                       target_ori,
-                                      indices=indices)
+                                      indices=env_ids)
         # self._targets.enable_rigid_body_physics()
 
 
@@ -760,7 +760,7 @@ class PCDMovingTargetTask(RLTask):
         # rand = torch.cat((x_rand, y_rand, z_ref), dim=1)    ### Do not randomize z position
         # goal_mark_pos = goal_mark_pos + rand
         # ### randomize goal position ###
-        self._goals.set_world_poses(goal_mark_pos + self._env_pos[env_ids], indices=indices)
+        self._goals.set_world_poses(goal_mark_pos + self._env_pos[env_ids], indices=env_ids)
         goal_pos = self._goals.get_local_poses()
         
         self.goal_pos_xy = goal_pos[0][:, [0, 1]]
@@ -773,23 +773,47 @@ class PCDMovingTargetTask(RLTask):
         # # tool_pos = torch.zeros((len(env_ids), 4), device=self._device)  # 여기에 rand를 추가
         # ### TODO: 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. pre_physics_step도 확인할 것
         # pos[:, 0:6] = pos[:, 0:6] + randomize_manipulator_pos
-        # ##### randomize robot pose #####        
+        # ##### randomize robot pose #####
 
-        '''아래 부분에 dof pos를 ik를 이용해 풀면 될듯'''
-
-        # ee_goal_position
-        # ee_goal_orientation
-
-
-        dof_pos = torch.zeros((len(indices), self._robots.num_dof), device=self._device)
+        dof_pos = torch.zeros((len(env_ids), self._robots.num_dof), device=self._device)
         dof_pos[:, :] = pos
-        dof_vel = torch.zeros((len(indices), self._robots.num_dof), device=self._device)
+        dof_vel = torch.zeros((len(env_ids), self._robots.num_dof), device=self._device)
         self.robot_dof_targets[env_ids, :] = pos
-        self.robot_dof_pos[env_ids, :] = pos
+        self._robots.set_joint_positions(self.robot_dof_targets[env_ids], indices=env_ids)
 
-        self._robots.set_joint_positions(dof_pos, indices=indices)
-        self._robots.set_joint_position_targets(self.robot_dof_targets[env_ids], indices=indices)
-        self._robots.set_joint_velocities(dof_vel, indices=indices)
+        '''target pos를 이용해서 ik를 풀려고 하긴 했는데, 의도되로 안됨....'''
+        '''아래의 ik 풀이 방식은 delta position을 이용한 방식이라서 target pos를 이용한 방식으로 변경해야 함.'''
+        '''cuRobo 써봐야 하나... ㅠㅠ'''
+        # target_pos 에서 y축으로 0.2만큼 뒤로 이동한 위치로 flange를 이동시키기
+        ee_pos = deepcopy(target_pos)
+        ee_pos[:, 0] -= 0.2
+        ee_pos[:, 1] -= 0.2
+        ee_pos[:, 2] = 0.35
+        ee_ori = torch.tensor([ 0.4547, -0.4543,  0.5427, -0.5407], device=self._device)
+        ee_ori = ee_ori.repeat(len(env_ids),1)
+
+        delta_dof_pos = omniverse_isaacgym_utils.ik(
+                                                jacobian_end_effector=self.jacobians[:, self._robots.body_names.index(self._flange_link)-1, :, :][env_ids],
+                                                current_position=self.flange_pos[env_ids],
+                                                current_orientation=self.flange_rot[env_ids],
+                                                goal_position=ee_pos,
+                                                goal_orientation=ee_ori,
+                                                method="pseudoinverse",
+                                                )
+        
+        target_pos = self._robots.get_joint_positions(clone=False)[:, 0:6][env_ids] + delta_dof_pos[:, :6]
+
+        if torch.all(delta_dof_pos.eq(0)):
+            self._robots.set_joint_positions(dof_pos, indices=env_ids)
+        else:
+            self.robot_dof_targets[env_ids, :6] = target_pos
+            self.robot_dof_targets[env_ids, :6] = torch.clamp(target_pos,
+                                                              self.robot_dof_lower_limits[:6].repeat(len(env_ids),1),
+                                                              self.robot_dof_upper_limits[:6].repeat(len(env_ids),1))
+            self._robots.set_joint_positions(self.robot_dof_targets[env_ids], indices=env_ids)
+        # self._robots.set_joint_positions(dof_pos, indices=indices)
+        # self._robots.set_joint_position_targets(self.robot_dof_targets[env_ids], indices=indices)
+        self._robots.set_joint_velocities(dof_vel, indices=env_ids)
 
 
 
