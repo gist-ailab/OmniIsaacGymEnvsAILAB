@@ -6,7 +6,20 @@ from gym import spaces
 from copy import deepcopy
  
 from omni.isaac.core.utils.extensions import enable_extension
-enable_extension("omni.replicator.isaac")   # required by PytorchListener
+enable_extension("omni.replicator.isaac")   # required for PytorchListener
+enable_extension("omni.isaac.universal_robots")   # required for RMPFlowControllerUR5e
+
+# CuRobo
+from curobo.geom.types import WorldConfig
+from curobo.types.base import TensorDeviceType
+from curobo.types.math import Pose
+from curobo.types.robot import RobotConfig
+from curobo.util_file import get_robot_configs_path, get_world_configs_path, join_path, load_yaml
+from curobo.wrap.reacher.ik_solver import IKSolver, IKSolverConfig
+torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
 # enable_extension("omni.kit.window.viewport")  # enable legacy viewport interface
 import omni.replicator.core as rep
 from omniisaacgymenvs.tasks.base.rl_task import RLTask
@@ -14,6 +27,7 @@ from omniisaacgymenvs.robots.articulations.ur5e_tool import UR5eTool
 from omniisaacgymenvs.robots.articulations.views.ur5e_view import UR5eView
 from omniisaacgymenvs.tasks.utils.pcd_writer import PointcloudWriter
 from omniisaacgymenvs.tasks.utils.pcd_listener import PointcloudListener
+# from omniisaacgymenvs.ur_ikfast.ur_ikfast import ur_kinematics
 from omni.isaac.core.utils.semantics import add_update_semantics
 
 import omni
@@ -21,6 +35,12 @@ from omni.isaac.core.prims import RigidPrimView, RigidContactView
 from omni.isaac.core.objects import DynamicCylinder, DynamicCone, DynamicSphere, DynamicCuboid
 from omni.isaac.core.utils.prims import get_prim_at_path, is_prim_path_valid
 from omni.isaac.core.materials.physics_material import PhysicsMaterial
+
+from omni.isaac.universal_robots.controllers.rmpflow_controller_ur5e import RMPFlowControllerUR5e
+from omni.isaac.universal_robots.tasks import FollowTargetUR5e
+
+
+
 
 from skrl.utils import omniverse_isaacgym_utils
 from pxr import Usd, UsdGeom, Gf, UsdPhysics, Semantics # pxr usd imports used to create cube
@@ -147,8 +167,47 @@ class PCDMovingTargetTask(RLTask):
         
         self.PointcloudWriter = PointcloudWriter
         self.PointcloudListener = PointcloudListener
-        
+
+        # self.ur5e_arm = ur_kinematics.URKinematics('ur5e')
+
+        self.init_cuRobo()
+        # # Solving I.K. with cuRobo
+        # tensor_args = TensorDeviceType()
+        # config_file = load_yaml(join_path(get_robot_configs_path(), "ur5e.yml"))
+        # urdf_file = config_file["robot_cfg"]["kinematics"][
+        #     "urdf_path"
+        # ]  # Send global path starting with "/"
+        # base_link = config_file["robot_cfg"]["kinematics"]["base_link"]
+        # ee_link = 'flange'
+        # robot_cfg = RobotConfig.from_basic(urdf_file, base_link, ee_link, tensor_args)
+
         RLTask.__init__(self, name, env)
+
+    
+    def init_cuRobo(self):
+        # Solving I.K. with cuRobo
+        tensor_args = TensorDeviceType()
+        config_file = load_yaml(join_path(get_robot_configs_path(), "ur5e.yml"))
+        urdf_file = config_file["robot_cfg"]["kinematics"][
+            "urdf_path"
+        ]  # Send global path starting with "/"
+        base_link = config_file["robot_cfg"]["kinematics"]["base_link"]
+        ee_link = 'flange'
+        robot_cfg = RobotConfig.from_basic(urdf_file, base_link, ee_link, tensor_args)
+
+        ik_config = IKSolverConfig.load_from_robot_config(
+            robot_cfg,
+            None,
+            rotation_threshold=0.05,
+            position_threshold=0.005,
+            num_seeds=20,
+            self_collision_check=False,
+            self_collision_opt=False,
+            tensor_args=tensor_args,
+            use_cuda_graph=False,
+        )
+        self.ik_solver = IKSolver(ik_config)
+
 
     def update_config(self, sim_config):
         self._sim_config = sim_config
@@ -199,6 +258,10 @@ class PCDMovingTargetTask(RLTask):
         scene.add(self._tools)
         scene.add(self._targets)
         scene.add(self._goals)
+
+        # # RMPflow for I.K.
+        # self.my_controller = RMPFlowControllerUR5e(name="target_follower_controller", robot_articulation=self.robot, attach_gripper=False)
+        # self.my_controller.reset()
         
         
         # # point cloud view
@@ -345,12 +408,12 @@ class PCDMovingTargetTask(RLTask):
         self.init_data()
 
     def get_robot(self):
-        robot = UR5eTool(prim_path=self.default_zero_env_path + "/robot",
+        self.robot = UR5eTool(prim_path=self.default_zero_env_path + "/robot",
                          translation=torch.tensor([0.0, 0.0, 0.0]),
                          orientation=torch.tensor([1.0, 0.0, 0.0, 0.0]),
                          name="robot")
         self._sim_config.apply_articulation_settings("robot",
-                                                     get_prim_at_path(robot.prim_path),
+                                                     get_prim_at_path(self.robot.prim_path),
                                                      self._sim_config.parse_actor_config("robot"))
 
     def get_target(self):
@@ -767,7 +830,8 @@ class PCDMovingTargetTask(RLTask):
 
 
         # reset robot
-        pos = self.robot_default_dof_pos.unsqueeze(0).repeat(len(env_ids), 1)   # non-randomized
+        # pos = self.robot_default_dof_pos.unsqueeze(0).repeat(len(env_ids), 1)   # non-randomized
+        pos = torch.tensor([-0.4363, -1.2217, 1.4835, -1.7453, -1.5708, 1.5708, 0.0873, 1.2217, 0.0000, -1.5708, 0.0000], device=self._device).repeat(len(env_ids), 1)
         # ##### randomize robot pose #####
         # randomize_manipulator_pos = 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs-4), device=self._device) - 0.5)
         # # tool_pos = torch.zeros((len(env_ids), 4), device=self._device)  # 여기에 rand를 추가
@@ -786,31 +850,97 @@ class PCDMovingTargetTask(RLTask):
         '''cuRobo 써봐야 하나... ㅠㅠ'''
         # target_pos 에서 y축으로 0.2만큼 뒤로 이동한 위치로 flange를 이동시키기
         ee_pos = deepcopy(target_pos)
-        ee_pos[:, 0] -= 0.2
-        ee_pos[:, 1] -= 0.2
-        ee_pos[:, 2] = 0.35
-        ee_ori = torch.tensor([ 0.4547, -0.4543,  0.5427, -0.5407], device=self._device)
+        ee_pos[:, 0] += 0.05
+        ee_pos[:, 1] -= 0.1
+        ee_pos[:, 2] = 0.45
+        ee_pos = torch.tensor([0.5, 0.1, 0.5], device=self._device)
+        # ee_pos = torch.tensor([ 0.6140, -0.1384,  0.4], device=self._device)
+        ee_pos = ee_pos.repeat(len(env_ids),1)
+        ee_ori = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)
+        # ee_ori = torch.tensor([ 0.7018, -0.6727,  0.2023, -0.1176], device=self._device)
+        # ee_ori = torch.tensor([ 0.6965, -0.6827,  0.1840, -0.1218], device=self._device)
+        # ee_ori = torch.tensor([1, 0, 0, 0], device=self._device)
         ee_ori = ee_ori.repeat(len(env_ids),1)
+
+        # get initial flange position and orientation. it is checked by the observation
+        flange_init_pos  = torch.tensor([0.4230, -0.4646,  0.3256], device=self._device)
+        flange_init_ori = torch.tensor([0.4547, -0.4543,  0.5427, -0.5407], device=self._device)
+        flange_init_pos = flange_init_pos.repeat(len(env_ids),1)
+        flange_init_ori = flange_init_ori.repeat(len(env_ids),1)
 
         delta_dof_pos = omniverse_isaacgym_utils.ik(
                                                 jacobian_end_effector=self.jacobians[:, self._robots.body_names.index(self._flange_link)-1, :, :][env_ids],
-                                                current_position=self.flange_pos[env_ids],
-                                                current_orientation=self.flange_rot[env_ids],
+                                                current_position=flange_init_pos,
+                                                current_orientation=flange_init_ori,
                                                 goal_position=ee_pos,
                                                 goal_orientation=ee_ori,
                                                 method="pseudoinverse",
                                                 )
+        '''current position과 orientation을 가져와야 하는데, 이 함수 안에서는 simulation step이 더 진행되지 않기 때문에 알 수 없다.. ㅠㅠ'''
+        '''아니면 어짜피 고정된 값일 테니, initial 값을 가져와서???'''
         
-        target_pos = self._robots.get_joint_positions(clone=False)[:, 0:6][env_ids] + delta_dof_pos[:, :6]
+        target_dof_pos = self._robots.get_joint_positions(clone=False)[:, 0:6][env_ids] + delta_dof_pos[:, :6]
 
-        if torch.all(delta_dof_pos.eq(0)):
-            self._robots.set_joint_positions(dof_pos, indices=env_ids)
-        else:
-            self.robot_dof_targets[env_ids, :6] = target_pos
-            self.robot_dof_targets[env_ids, :6] = torch.clamp(target_pos,
-                                                              self.robot_dof_lower_limits[:6].repeat(len(env_ids),1),
-                                                              self.robot_dof_upper_limits[:6].repeat(len(env_ids),1))
-            self._robots.set_joint_positions(self.robot_dof_targets[env_ids], indices=env_ids)
+        # if torch.all(delta_dof_pos.eq(0)):
+        #     self._robots.set_joint_positions(dof_pos, indices=env_ids)
+        # else:
+        #     ee_goal_pos = np.append(ee_pos[0].cpu().numpy(), ee_ori[0].cpu().numpy())
+        #     initialzed_pos = torch.empty(0).to(self._device)
+
+        #     # RMPflow for I.K.
+        #     self.my_controller = RMPFlowControllerUR5e(name="target_follower_controller", robot_articulation=self.robot, attach_gripper=False)
+        #     self.my_controller.reset()
+
+        #     for i in env_ids:
+        #         print(i)
+        #         cal_pos = self.my_controller.forward(
+        #                                         target_end_effector_position = ee_pos.cpu().numpy()[i],
+        #                                         target_end_effector_orientation = ee_ori.cpu().numpy()[i],
+        #         )
+        #         cal_pos_tensor = torch.tensor(cal_pos, device=self._device)
+
+        #         initialzed_pos = torch.cat((initialzed_pos, cal_pos_tensor), dim=0)
+
+        # if torch.all(self.jacobians.eq(0)):
+        #     pass
+        # else:
+        #     # cal_pos = my_controller.forward(
+        #     #                                 target_end_effector_position = ee_pos[0].cpu().numpy(),
+        #     #                                 target_end_effector_orientation = ee_ori[0].cpu().numpy(),
+        #     # )
+
+        #     initialized_pos = Pose(ee_pos, ee_ori, name="flange")
+        #     # initialized_pos = Pose(ee_pos, name="flange")
+        #     # target_dof_pos = self.ik_solver.solve_batch_env(initialized_pos)
+        #     result = self.ik_solver.solve_batch_env(initialized_pos)
+        #     target_dof_pos = result.solution[result.success]
+
+        initialized_pos = Pose(ee_pos, ee_ori, name="flange")
+        # initialized_pos = Pose(ee_pos, name="flange")
+        # target_dof_pos = self.ik_solver.solve_batch_env(initialized_pos)
+        try:
+            result = self.ik_solver.solve_batch_env(initialized_pos)
+        except:
+            get_result = False
+            # if the dimension of the initialized_pos is changed, reinitialize the cuRobo
+            self.init_cuRobo()
+            # if len(env_ids) == 1:
+            #     result = self.ik_solver.solve_batch(initialized_pos)
+            while not get_result:
+                try:
+                    result = self.ik_solver.solve_batch_env(initialized_pos)
+                    break
+                except:
+                    self.init_cuRobo()
+                    continue
+
+            result = self.ik_solver.solve_batch_env(initialized_pos)
+        target_dof_pos = result.solution[result.success]
+
+        self.robot_dof_targets[env_ids, :6] = torch.clamp(target_dof_pos,
+                                                          self.robot_dof_lower_limits[:6].repeat(len(env_ids),1),
+                                                          self.robot_dof_upper_limits[:6].repeat(len(env_ids),1))
+        self._robots.set_joint_positions(self.robot_dof_targets[env_ids], indices=env_ids)
         # self._robots.set_joint_positions(dof_pos, indices=indices)
         # self._robots.set_joint_position_targets(self.robot_dof_targets[env_ids], indices=indices)
         self._robots.set_joint_velocities(dof_vel, indices=env_ids)
