@@ -7,7 +7,6 @@ from copy import deepcopy
  
 from omni.isaac.core.utils.extensions import enable_extension
 enable_extension("omni.replicator.isaac")   # required for PytorchListener
-enable_extension("omni.isaac.universal_robots")   # required for RMPFlowControllerUR5e
 
 # CuRobo
 from curobo.geom.types import WorldConfig
@@ -35,12 +34,6 @@ from omni.isaac.core.prims import RigidPrimView, RigidContactView
 from omni.isaac.core.objects import DynamicCylinder, DynamicCone, DynamicSphere, DynamicCuboid
 from omni.isaac.core.utils.prims import get_prim_at_path, is_prim_path_valid
 from omni.isaac.core.materials.physics_material import PhysicsMaterial
-
-from omni.isaac.universal_robots.controllers.rmpflow_controller_ur5e import RMPFlowControllerUR5e
-from omni.isaac.universal_robots.tasks import FollowTargetUR5e
-
-
-
 
 from skrl.utils import omniverse_isaacgym_utils
 from pxr import Usd, UsdGeom, Gf, UsdPhysics, Semantics # pxr usd imports used to create cube
@@ -168,18 +161,9 @@ class PCDMovingTargetTask(RLTask):
         self.PointcloudWriter = PointcloudWriter
         self.PointcloudListener = PointcloudListener
 
-        # self.ur5e_arm = ur_kinematics.URKinematics('ur5e')
-
+        # Solving I.K. with cuRobo
         self.init_cuRobo()
-        # # Solving I.K. with cuRobo
-        # tensor_args = TensorDeviceType()
-        # config_file = load_yaml(join_path(get_robot_configs_path(), "ur5e.yml"))
-        # urdf_file = config_file["robot_cfg"]["kinematics"][
-        #     "urdf_path"
-        # ]  # Send global path starting with "/"
-        # base_link = config_file["robot_cfg"]["kinematics"]["base_link"]
-        # ee_link = 'flange'
-        # robot_cfg = RobotConfig.from_basic(urdf_file, base_link, ee_link, tensor_args)
+        
 
         RLTask.__init__(self, name, env)
 
@@ -204,7 +188,7 @@ class PCDMovingTargetTask(RLTask):
             self_collision_check=False,
             self_collision_opt=False,
             tensor_args=tensor_args,
-            use_cuda_graph=False,
+            use_cuda_graph=True,
         )
         self.ik_solver = IKSolver(ik_config)
 
@@ -257,12 +241,7 @@ class PCDMovingTargetTask(RLTask):
         scene.add(self._flanges)
         scene.add(self._tools)
         scene.add(self._targets)
-        scene.add(self._goals)
-
-        # # RMPflow for I.K.
-        # self.my_controller = RMPFlowControllerUR5e(name="target_follower_controller", robot_articulation=self.robot, attach_gripper=False)
-        # self.my_controller.reset()
-        
+        scene.add(self._goals)        
         
         # # point cloud view
         # self.render_products = []
@@ -462,92 +441,18 @@ class PCDMovingTargetTask(RLTask):
             # self.jacobians = torch.zeros((self._num_envs, 11, 6, 6), device=self._device)
             if self._robots.body_names == None:
                 # self.jacobians = torch.zeros((self._num_envs, 11, 6, 6), device=self._device)
-                self.jacobians = torch.zeros((self._num_envs, 9, 6, 6), device=self._device)
+                self.jacobians = torch.zeros((self._num_envs, 15, 6, 11), device=self._device)
+                # ['world', 'base_link', 'base', 'shoulder_link', 'upper_arm_link', 'forearm_link', 'wrist_1_link', 'wrist_2_link', 'wrist_3_link', 'flange', 'flange_tool_rot_x', 'flange_tool_rot_z', 'flange_tool_rot_y', 'flange_tool_tran_y', 'tool']
                 # end-effector link index is 9 which is the flange
             else:
                 self.jacobians = torch.zeros((self._num_envs,
-                                              self._robots.body_names.index(self._flange_link),
+                                            #   self._robots.body_names.index(self._flange_link),
+                                              len(self._robots.body_names),
                                               6,
-                                              6), device=self._device)
+                                              11), device=self._device)
                 '''jacobian : (self._num_envs, num_of_bodies-1, wrench, num of joints)
                 num_of_bodies - 1 due to start from 0 index'''
             self.flange_pos, self.flange_rot = torch.zeros((self._num_envs, 3), device=self._device), torch.zeros((self._num_envs, 4), device=self._device)
-
-
-    # def visualize_point_cloud(self, view_idx, lidar_position):
-    #     '''
-    #     args:
-    #         view_idx: index of the cloner
-    #         lidar_position: position of the lidar
-    #     '''
-    #     flange_pos, flange_rot = self._flanges.get_local_poses()
-
-    #     lidar_prim_path = self._point_cloud[view_idx].prim_path
-    #     point_cloud = self._point_cloud[view_idx]._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
-    #     semantic = self._point_cloud[view_idx]._lidar_sensor_interface.get_semantic_data(lidar_prim_path)
-
-    #     pcl_reshape = np.reshape(point_cloud, (point_cloud.shape[0]*point_cloud.shape[1], 3))
-    #     flange_pos_np = flange_pos[view_idx].cpu().numpy()
-    #     flange_ori_np = flange_rot[view_idx].cpu().numpy()
-
-    #     pcl_semantic = np.reshape(semantic, -1)        
-
-
-    #     v3d = o3d.utility.Vector3dVector
-
-    #     # get point cloud
-    #     pcd = o3d.geometry.PointCloud()
-    #     pcd.points = v3d(pcl_reshape)
-
-    #     # get sampled point cloud
-    #     idx = pcu.downsample_point_cloud_poisson_disk(pcl_reshape, num_samples=int(0.2*pcl_reshape.shape[0]))
-    #     pcl_reshape_sampled = pcl_reshape[idx]
-    #     sampled_pcd = o3d.geometry.PointCloud()
-    #     sampled_pcd.points = v3d(pcl_reshape_sampled)
-
-    #     # get lidar frame. lidar frame is a world [0, 0, 0] frame
-    #     lidar_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.2, origin=np.array([0.0, 0.0, 0.0]))
-
-    #     # get base pose    
-    #     T_b = np.eye(4)
-    #     # TODO: get rotation matrix from USD
-    #     # R_b = lidar_coord.get_rotation_matrix_from_xyz((np.pi/6, 0, -np.pi/2))
-    #     R_b = lidar_coord.get_rotation_matrix_from_xyz((np.pi/9, 0, -np.pi/2))  # rotation relationship between lidar and base
-    #     T_b[:3, :3] = R_b
-    #     T_b[:3, 3] = lidar_position # acquired position from prim_path is [0,0,0]
-    #     T_b_inv = np.linalg.inv(T_b)
-    #     base_coord = copy.deepcopy(lidar_coord).transform(T_b_inv)
-    #     # o3d.visualization.draw_geometries([pcd, lidar_coord, base_coord])
-
-    #     # get ee pose
-    #     T_ee = np.eye(4)
-    #     R_ee = base_coord.get_rotation_matrix_from_quaternion(flange_ori_np)
-    #     T_ee[:3, :3] = R_ee
-    #     T_ee[:3, 3] = flange_pos_np
-    #     T_l_e = np.matmul(T_b_inv, T_ee)
-    #     flange_coord = copy.deepcopy(lidar_coord).transform(T_l_e)
-    #     # o3d.visualization.draw_geometries([pcd, lidar_coord, base_coord, flange_coord],
-    #     #                                   window_name=f'scene of env_{view_idx}')
-
-
-    #     # print(f'env index: {view_idx}', np.unique(pcl_semantic))
-
-    #     # 아래는 마지막 index만 가시화 (도구 가시화를 의도함)
-    #     # index = np.unique(pcl_semantic)[-1]
-    #     # print(f'show index: {index}\n')
-    #     # semantic = np.where(pcl_semantic==index)[0]
-    #     # pcd_semantic = o3d.geometry.PointCloud()
-    #     # pcd_semantic.points = o3d.utility.Vector3dVector(pcl_reshape[semantic])
-    #     # o3d.visualization.draw_geometries([pcd_semantic, lidar_coord, base_coord, flange_coord],
-    #     #                                     window_name=f'semantic_{index} of env_{view_idx}')
-        
-
-    #     for i in np.unique(pcl_semantic):
-    #         semantic = np.where(pcl_semantic==i)[0]
-    #         pcd_semantic = o3d.geometry.PointCloud()
-    #         pcd_semantic.points = o3d.utility.Vector3dVector(pcl_reshape[semantic])
-    #         o3d.visualization.draw_geometries([pcd_semantic, lidar_coord, base_coord, flange_coord],
-    #                                           window_name=f'semantic_{i} of env_{view_idx}')
 
 
     def get_observations(self) -> dict:
@@ -602,71 +507,6 @@ class PCDMovingTargetTask(RLTask):
         # Convert back from homogeneous coordinates by removing the last dimension
         target_pcd_transformed = transformed_points_homogeneous[..., :3]
         ##### point cloud registration for target object #####
-
-
-        ##################### ####################################
-        ################# visualize point cloud #################
-        # view_idx = 0
-
-        # base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
-        # tool_pos_np = tool_pos[view_idx].cpu().numpy()
-        # tool_rot_np = tool_rot[view_idx].cpu().numpy()
-        # tgt_pos_np = target_pos[view_idx].cpu().numpy()
-        # tgt_rot_np = target_rot[view_idx].cpu().numpy()
-        
-        # tool_transformed_pcd_np = tool_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
-        # tool_transformed_point_cloud = o3d.geometry.PointCloud()
-        # tool_transformed_point_cloud.points = o3d.utility.Vector3dVector(tool_transformed_pcd_np)
-        # T_t = np.eye(4)
-        # T_t[:3, :3] = tool_rot_np
-        # T_t[:3, 3] = tool_pos_np
-        # tool_coord = copy.deepcopy(base_coord).transform(T_t)
-
-        # tool_end_point = o3d.geometry.TriangleMesh().create_sphere(radius=0.01)
-        # tool_end_point.paint_uniform_color([0, 0, 1])
-        # farthest_pt = tool_transformed_pcd_np[farthest_idx.detach().cpu().numpy()][view_idx]
-        # T_t_p = np.eye(4)
-        # T_t_p[:3, 3] = farthest_pt
-        # tool_tip_position = copy.deepcopy(tool_end_point).transform(T_t_p)
-
-        # tgt_transformed_pcd_np = target_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
-        # tgt_transformed_point_cloud = o3d.geometry.PointCloud()
-        # tgt_transformed_point_cloud.points = o3d.utility.Vector3dVector(tgt_transformed_pcd_np)
-        # T_o = np.eye(4)
-
-        # # R_b = tgt_rot_np.get_rotation_matrix_from_xyz((np.pi/2, 0, 0))
-        # T_o[:3, :3] = tgt_rot_np
-        # # T_o[:3, :3] = R_b
-        # T_o[:3, 3] = tgt_pos_np
-        # tgt_coord = copy.deepcopy(base_coord).transform(T_o)
-
-        # self.goal_pos, _ = self._goals.get_local_poses()
-        # goal_pos_np = self.goal_pos[view_idx].cpu().numpy()
-        # goal_cone = o3d.geometry.TriangleMesh.create_cone(radius=0.01, height=0.03)
-        # goal_cone.paint_uniform_color([0, 1, 0])
-        # T_g_p = np.eye(4)
-        # T_g_p[:3, 3] = goal_pos_np
-        # goal_position = copy.deepcopy(goal_cone).transform(T_g_p)
-
-        # goal_pos_xy_np = copy.deepcopy(goal_pos_np)
-        # goal_pos_xy_np[2] = self.target_height
-        # goal_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
-        # goal_sphere.paint_uniform_color([1, 0, 0])
-        # T_g = np.eye(4)
-        # T_g[:3, 3] = goal_pos_xy_np
-        # goal_position_xy = copy.deepcopy(goal_sphere).transform(T_g)
-
-        # o3d.visualization.draw_geometries([base_coord,
-        #                                    tool_transformed_point_cloud,
-        #                                    tgt_transformed_point_cloud,
-        #                                    tool_tip_position,
-        #                                    tool_coord,
-        #                                    tgt_coord,
-        #                                    goal_position,
-        #                                    goal_position_xy],
-        #                                     window_name=f'point cloud')
-        ################# visualize point cloud #################
-        #########################################################
 
         self.target_pos_xyz = torch.mean(target_pcd_transformed, dim=1)
         self.target_pos_xy = self.target_pos_xyz[:, [0, 1]]
@@ -763,12 +603,15 @@ class PCDMovingTargetTask(RLTask):
             goal_position = self.flange_pos + self.actions[:, :3] / 70.0
             goal_orientation = self.flange_rot + self.actions[:, 3:] / 70.0
             delta_dof_pos = omniverse_isaacgym_utils.ik(
-                                                        jacobian_end_effector=self.jacobians[:, self._robots.body_names.index(self._flange_link)-1, :, :],
+                                                        jacobian_end_effector=self.jacobians[:, self._robots.body_names.index(self._flange_link), :, :6],
                                                         current_position=self.flange_pos,
                                                         current_orientation=self.flange_rot,
                                                         goal_position=goal_position,
                                                         goal_orientation=goal_orientation
                                                         )
+            '''jacobian : (self._num_envs, num_of_bodies-1, wrench, num of joints)
+            num_of_bodies - 1 due to start from 0 index
+            s'''
             targets = self.robot_dof_targets[:, :6] + delta_dof_pos[:, :6]
 
         self.robot_dof_targets[:, :6] = torch.clamp(targets, self.robot_dof_lower_limits[:6], self.robot_dof_upper_limits[:6])
@@ -830,8 +673,8 @@ class PCDMovingTargetTask(RLTask):
 
 
         # reset robot
-        # pos = self.robot_default_dof_pos.unsqueeze(0).repeat(len(env_ids), 1)   # non-randomized
-        pos = torch.tensor([-0.4363, -1.2217, 1.4835, -1.7453, -1.5708, 1.5708, 0.0873, 1.2217, 0.0000, -1.5708, 0.0000], device=self._device).repeat(len(env_ids), 1)
+        pos = self.robot_default_dof_pos.unsqueeze(0).repeat(len(env_ids), 1)   # non-randomized
+        # pos = torch.tensor([-0.4363, -1.2217, 1.4835, -1.7453, -1.5708, 1.5708, 0.0873, 1.2217, 0.0000, -1.5708, 0.0000], device=self._device).repeat(len(env_ids), 1)
         # ##### randomize robot pose #####
         # randomize_manipulator_pos = 0.25 * (torch.rand((len(env_ids), self.num_robot_dofs-4), device=self._device) - 0.5)
         # # tool_pos = torch.zeros((len(env_ids), 4), device=self._device)  # 여기에 rand를 추가
@@ -845,106 +688,32 @@ class PCDMovingTargetTask(RLTask):
         self.robot_dof_targets[env_ids, :] = pos
         self._robots.set_joint_positions(self.robot_dof_targets[env_ids], indices=env_ids)
 
-        '''target pos를 이용해서 ik를 풀려고 하긴 했는데, 의도되로 안됨....'''
-        '''아래의 ik 풀이 방식은 delta position을 이용한 방식이라서 target pos를 이용한 방식으로 변경해야 함.'''
-        '''cuRobo 써봐야 하나... ㅠㅠ'''
         # target_pos 에서 y축으로 0.2만큼 뒤로 이동한 위치로 flange를 이동시키기
         ee_pos = deepcopy(target_pos)
         ee_pos[:, 0] += 0.05
         ee_pos[:, 1] -= 0.1
         ee_pos[:, 2] = 0.45
-        ee_pos = torch.tensor([0.5, 0.1, 0.5], device=self._device)
         # ee_pos = torch.tensor([ 0.6140, -0.1384,  0.4], device=self._device)
-        ee_pos = ee_pos.repeat(len(env_ids),1)
-        ee_ori = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)
-        # ee_ori = torch.tensor([ 0.7018, -0.6727,  0.2023, -0.1176], device=self._device)
-        # ee_ori = torch.tensor([ 0.6965, -0.6827,  0.1840, -0.1218], device=self._device)
-        # ee_ori = torch.tensor([1, 0, 0, 0], device=self._device)
+        # ee_pos = ee_pos.repeat(len(env_ids),1)
+
+        ee_ori = torch.tensor([0.707, 0.0, 0.707, 0.0], device=self._device)
+        # ee_ori = torch.tensor([0.5, -0.5, 0.5, -0.5], device=self._device)
         ee_ori = ee_ori.repeat(len(env_ids),1)
 
-        # get initial flange position and orientation. it is checked by the observation
-        flange_init_pos  = torch.tensor([0.4230, -0.4646,  0.3256], device=self._device)
-        flange_init_ori = torch.tensor([0.4547, -0.4543,  0.5427, -0.5407], device=self._device)
-        flange_init_pos = flange_init_pos.repeat(len(env_ids),1)
-        flange_init_ori = flange_init_ori.repeat(len(env_ids),1)
-
-        delta_dof_pos = omniverse_isaacgym_utils.ik(
-                                                jacobian_end_effector=self.jacobians[:, self._robots.body_names.index(self._flange_link)-1, :, :][env_ids],
-                                                current_position=flange_init_pos,
-                                                current_orientation=flange_init_ori,
-                                                goal_position=ee_pos,
-                                                goal_orientation=ee_ori,
-                                                method="pseudoinverse",
-                                                )
-        '''current position과 orientation을 가져와야 하는데, 이 함수 안에서는 simulation step이 더 진행되지 않기 때문에 알 수 없다.. ㅠㅠ'''
-        '''아니면 어짜피 고정된 값일 테니, initial 값을 가져와서???'''
-        
-        target_dof_pos = self._robots.get_joint_positions(clone=False)[:, 0:6][env_ids] + delta_dof_pos[:, :6]
-
-        # if torch.all(delta_dof_pos.eq(0)):
-        #     self._robots.set_joint_positions(dof_pos, indices=env_ids)
-        # else:
-        #     ee_goal_pos = np.append(ee_pos[0].cpu().numpy(), ee_ori[0].cpu().numpy())
-        #     initialzed_pos = torch.empty(0).to(self._device)
-
-        #     # RMPflow for I.K.
-        #     self.my_controller = RMPFlowControllerUR5e(name="target_follower_controller", robot_articulation=self.robot, attach_gripper=False)
-        #     self.my_controller.reset()
-
-        #     for i in env_ids:
-        #         print(i)
-        #         cal_pos = self.my_controller.forward(
-        #                                         target_end_effector_position = ee_pos.cpu().numpy()[i],
-        #                                         target_end_effector_orientation = ee_ori.cpu().numpy()[i],
-        #         )
-        #         cal_pos_tensor = torch.tensor(cal_pos, device=self._device)
-
-        #         initialzed_pos = torch.cat((initialzed_pos, cal_pos_tensor), dim=0)
-
-        # if torch.all(self.jacobians.eq(0)):
-        #     pass
-        # else:
-        #     # cal_pos = my_controller.forward(
-        #     #                                 target_end_effector_position = ee_pos[0].cpu().numpy(),
-        #     #                                 target_end_effector_orientation = ee_ori[0].cpu().numpy(),
-        #     # )
-
-        #     initialized_pos = Pose(ee_pos, ee_ori, name="flange")
-        #     # initialized_pos = Pose(ee_pos, name="flange")
-        #     # target_dof_pos = self.ik_solver.solve_batch_env(initialized_pos)
-        #     result = self.ik_solver.solve_batch_env(initialized_pos)
-        #     target_dof_pos = result.solution[result.success]
-
         initialized_pos = Pose(ee_pos, ee_ori, name="flange")
-        # initialized_pos = Pose(ee_pos, name="flange")
-        # target_dof_pos = self.ik_solver.solve_batch_env(initialized_pos)
-        try:
-            result = self.ik_solver.solve_batch_env(initialized_pos)
-        except:
-            get_result = False
-            # if the dimension of the initialized_pos is changed, reinitialize the cuRobo
-            self.init_cuRobo()
-            # if len(env_ids) == 1:
-            #     result = self.ik_solver.solve_batch(initialized_pos)
-            while not get_result:
-                try:
-                    result = self.ik_solver.solve_batch_env(initialized_pos)
-                    break
-                except:
-                    self.init_cuRobo()
-                    continue
 
-            result = self.ik_solver.solve_batch_env(initialized_pos)
-        target_dof_pos = result.solution[result.success]
+        target_dof_pos = torch.empty(0).to(device=self._device)
+        for i in range(initialized_pos.batch):
+            result = self.ik_solver.solve_single(initialized_pos[i])
+            target_dof_pos = torch.cat((target_dof_pos, result.solution[result.success]), dim=0)
 
         self.robot_dof_targets[env_ids, :6] = torch.clamp(target_dof_pos,
                                                           self.robot_dof_lower_limits[:6].repeat(len(env_ids),1),
                                                           self.robot_dof_upper_limits[:6].repeat(len(env_ids),1))
         self._robots.set_joint_positions(self.robot_dof_targets[env_ids], indices=env_ids)
         # self._robots.set_joint_positions(dof_pos, indices=indices)
-        # self._robots.set_joint_position_targets(self.robot_dof_targets[env_ids], indices=indices)
+        self._robots.set_joint_position_targets(self.robot_dof_targets[env_ids], indices=env_ids)
         self._robots.set_joint_velocities(dof_vel, indices=env_ids)
-
 
 
         # bookkeeping
@@ -1051,3 +820,144 @@ class PCDMovingTargetTask(RLTask):
         # max episode length
         self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, ones, reset)
 
+
+
+
+    # def visualize_point_cloud(self, view_idx, lidar_position):
+    #     '''
+    #     args:
+    #         view_idx: index of the cloner
+    #         lidar_position: position of the lidar
+    #     '''
+    #     flange_pos, flange_rot = self._flanges.get_local_poses()
+
+    #     lidar_prim_path = self._point_cloud[view_idx].prim_path
+    #     point_cloud = self._point_cloud[view_idx]._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
+    #     semantic = self._point_cloud[view_idx]._lidar_sensor_interface.get_semantic_data(lidar_prim_path)
+
+    #     pcl_reshape = np.reshape(point_cloud, (point_cloud.shape[0]*point_cloud.shape[1], 3))
+    #     flange_pos_np = flange_pos[view_idx].cpu().numpy()
+    #     flange_ori_np = flange_rot[view_idx].cpu().numpy()
+
+    #     pcl_semantic = np.reshape(semantic, -1)        
+
+
+    #     v3d = o3d.utility.Vector3dVector
+
+    #     # get point cloud
+    #     pcd = o3d.geometry.PointCloud()
+    #     pcd.points = v3d(pcl_reshape)
+
+    #     # get sampled point cloud
+    #     idx = pcu.downsample_point_cloud_poisson_disk(pcl_reshape, num_samples=int(0.2*pcl_reshape.shape[0]))
+    #     pcl_reshape_sampled = pcl_reshape[idx]
+    #     sampled_pcd = o3d.geometry.PointCloud()
+    #     sampled_pcd.points = v3d(pcl_reshape_sampled)
+
+    #     # get lidar frame. lidar frame is a world [0, 0, 0] frame
+    #     lidar_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.2, origin=np.array([0.0, 0.0, 0.0]))
+
+    #     # get base pose    
+    #     T_b = np.eye(4)
+    #     # TODO: get rotation matrix from USD
+    #     # R_b = lidar_coord.get_rotation_matrix_from_xyz((np.pi/6, 0, -np.pi/2))
+    #     R_b = lidar_coord.get_rotation_matrix_from_xyz((np.pi/9, 0, -np.pi/2))  # rotation relationship between lidar and base
+    #     T_b[:3, :3] = R_b
+    #     T_b[:3, 3] = lidar_position # acquired position from prim_path is [0,0,0]
+    #     T_b_inv = np.linalg.inv(T_b)
+    #     base_coord = copy.deepcopy(lidar_coord).transform(T_b_inv)
+    #     # o3d.visualization.draw_geometries([pcd, lidar_coord, base_coord])
+
+    #     # get ee pose
+    #     T_ee = np.eye(4)
+    #     R_ee = base_coord.get_rotation_matrix_from_quaternion(flange_ori_np)
+    #     T_ee[:3, :3] = R_ee
+    #     T_ee[:3, 3] = flange_pos_np
+    #     T_l_e = np.matmul(T_b_inv, T_ee)
+    #     flange_coord = copy.deepcopy(lidar_coord).transform(T_l_e)
+    #     # o3d.visualization.draw_geometries([pcd, lidar_coord, base_coord, flange_coord],
+    #     #                                   window_name=f'scene of env_{view_idx}')
+
+
+    #     # print(f'env index: {view_idx}', np.unique(pcl_semantic))
+
+    #     # 아래는 마지막 index만 가시화 (도구 가시화를 의도함)
+    #     # index = np.unique(pcl_semantic)[-1]
+    #     # print(f'show index: {index}\n')
+    #     # semantic = np.where(pcl_semantic==index)[0]
+    #     # pcd_semantic = o3d.geometry.PointCloud()
+    #     # pcd_semantic.points = o3d.utility.Vector3dVector(pcl_reshape[semantic])
+    #     # o3d.visualization.draw_geometries([pcd_semantic, lidar_coord, base_coord, flange_coord],
+    #     #                                     window_name=f'semantic_{index} of env_{view_idx}')
+        
+
+    #     for i in np.unique(pcl_semantic):
+    #         semantic = np.where(pcl_semantic==i)[0]
+    #         pcd_semantic = o3d.geometry.PointCloud()
+    #         pcd_semantic.points = o3d.utility.Vector3dVector(pcl_reshape[semantic])
+    #         o3d.visualization.draw_geometries([pcd_semantic, lidar_coord, base_coord, flange_coord],
+    #                                           window_name=f'semantic_{i} of env_{view_idx}')
+
+    ##################### ####################################
+    ################# visualize point cloud #################
+    # view_idx = 0
+
+    # base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
+    # tool_pos_np = tool_pos[view_idx].cpu().numpy()
+    # tool_rot_np = tool_rot[view_idx].cpu().numpy()
+    # tgt_pos_np = target_pos[view_idx].cpu().numpy()
+    # tgt_rot_np = target_rot[view_idx].cpu().numpy()
+    
+    # tool_transformed_pcd_np = tool_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
+    # tool_transformed_point_cloud = o3d.geometry.PointCloud()
+    # tool_transformed_point_cloud.points = o3d.utility.Vector3dVector(tool_transformed_pcd_np)
+    # T_t = np.eye(4)
+    # T_t[:3, :3] = tool_rot_np
+    # T_t[:3, 3] = tool_pos_np
+    # tool_coord = copy.deepcopy(base_coord).transform(T_t)
+
+    # tool_end_point = o3d.geometry.TriangleMesh().create_sphere(radius=0.01)
+    # tool_end_point.paint_uniform_color([0, 0, 1])
+    # farthest_pt = tool_transformed_pcd_np[farthest_idx.detach().cpu().numpy()][view_idx]
+    # T_t_p = np.eye(4)
+    # T_t_p[:3, 3] = farthest_pt
+    # tool_tip_position = copy.deepcopy(tool_end_point).transform(T_t_p)
+
+    # tgt_transformed_pcd_np = target_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
+    # tgt_transformed_point_cloud = o3d.geometry.PointCloud()
+    # tgt_transformed_point_cloud.points = o3d.utility.Vector3dVector(tgt_transformed_pcd_np)
+    # T_o = np.eye(4)
+
+    # # R_b = tgt_rot_np.get_rotation_matrix_from_xyz((np.pi/2, 0, 0))
+    # T_o[:3, :3] = tgt_rot_np
+    # # T_o[:3, :3] = R_b
+    # T_o[:3, 3] = tgt_pos_np
+    # tgt_coord = copy.deepcopy(base_coord).transform(T_o)
+
+    # self.goal_pos, _ = self._goals.get_local_poses()
+    # goal_pos_np = self.goal_pos[view_idx].cpu().numpy()
+    # goal_cone = o3d.geometry.TriangleMesh.create_cone(radius=0.01, height=0.03)
+    # goal_cone.paint_uniform_color([0, 1, 0])
+    # T_g_p = np.eye(4)
+    # T_g_p[:3, 3] = goal_pos_np
+    # goal_position = copy.deepcopy(goal_cone).transform(T_g_p)
+
+    # goal_pos_xy_np = copy.deepcopy(goal_pos_np)
+    # goal_pos_xy_np[2] = self.target_height
+    # goal_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+    # goal_sphere.paint_uniform_color([1, 0, 0])
+    # T_g = np.eye(4)
+    # T_g[:3, 3] = goal_pos_xy_np
+    # goal_position_xy = copy.deepcopy(goal_sphere).transform(T_g)
+
+    # o3d.visualization.draw_geometries([base_coord,
+    #                                    tool_transformed_point_cloud,
+    #                                    tgt_transformed_point_cloud,
+    #                                    tool_tip_position,
+    #                                    tool_coord,
+    #                                    tgt_coord,
+    #                                    goal_position,
+    #                                    goal_position_xy],
+    #                                     window_name=f'point cloud')
+    ################# visualize point cloud #################
+    #########################################################
