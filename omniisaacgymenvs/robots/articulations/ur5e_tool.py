@@ -67,11 +67,11 @@ class UR5eTool(Robot):
             "forearm_link/wrist_1_joint",
             "wrist_1_link/wrist_2_joint",
             "wrist_2_link/wrist_3_joint",
-            "wrist_3_link/wrist_3_link_flange_prismatic",
+            "flange/grasped_position",
             "flange_tool_rot_x/flange_revolute_x",
             "flange_tool_rot_z/flange_revolute_z",
             "flange_tool_rot_y/flange_revolute_y",
-            "flange_tool_tran_y/flange_prismatic_y",
+            "flange_tool_tran_y/tool_prismatic",
         ]
 
 
