@@ -171,22 +171,28 @@ class PCDMovingTargetTask(RLTask):
     def init_cuRobo(self):
         # Solving I.K. with cuRobo
         tensor_args = TensorDeviceType()
-        config_file = load_yaml(join_path(get_robot_configs_path(), "ur5e.yml"))
-        urdf_file = config_file["robot_cfg"]["kinematics"][
-            "urdf_path"
-        ]  # Send global path starting with "/"
-        base_link = config_file["robot_cfg"]["kinematics"]["base_link"]
-        ee_link = 'flange'
-        robot_cfg = RobotConfig.from_basic(urdf_file, base_link, ee_link, tensor_args)
+        robot_config_file = load_yaml(join_path(get_robot_configs_path(), "ur5e.yml"))
+        robot_config = robot_config_file["robot_cfg"]
+        # urdf_file = config_file["robot_cfg"]["kinematics"][
+        #     "urdf_path"
+        # ]  # Send global path starting with "/"
+        collision_file = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/collision_bar.yml"
+        
+        # base_link = config_file["robot_cfg"]["kinematics"]["base_link"]
+        # ee_link = 'flange'
+        # ee_link = 'tool0'   # 기본 제공 파일엔 끝 link가 tool0으로 되어 있음
+        # robot_cfg = RobotConfig.from_basic(urdf_file, base_link, ee_link, tensor_args)
+        world_cfg = WorldConfig.from_dict(load_yaml(collision_file))
 
         ik_config = IKSolverConfig.load_from_robot_config(
-            robot_cfg,
-            None,
+            robot_config,
+            world_cfg,
+            # None,
             rotation_threshold=0.05,
             position_threshold=0.005,
             num_seeds=20,
-            self_collision_check=False,
-            self_collision_opt=False,
+            self_collision_check=True,
+            self_collision_opt=True,
             tensor_args=tensor_args,
             use_cuda_graph=True,
         )
@@ -219,6 +225,7 @@ class PCDMovingTargetTask(RLTask):
     def set_up_scene(self, scene) -> None:
         self.get_robot()
         self.get_target()
+        self.get_cube()
         self.get_goal()
         # self.get_lidar(idx=0, scene=scene)
 
@@ -233,6 +240,7 @@ class PCDMovingTargetTask(RLTask):
         self._tools = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/tool", name="tool_view")        
         # target view
         self._targets = RigidPrimView(prim_paths_expr="/World/envs/.*/target", name="target_view", reset_xform_properties=False)        
+        # self._cubes = RigidPrimView(prim_paths_expr="/World/envs/.*/cube", name="cube_view", reset_xform_properties=True)
         # goal view
         self._goals = RigidPrimView(prim_paths_expr="/World/envs/.*/goal", name="goal_view", reset_xform_properties=False)
         self._goals._non_root_link = True   # do not set states for kinematics
@@ -376,6 +384,7 @@ class PCDMovingTargetTask(RLTask):
         self._flanges = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/{self._flange_link}", name="end_effector_view")
         self._tools = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/tool", name="tool_view")
         self._targets = RigidPrimView(prim_paths_expr="/World/envs/.*/target", name="target_view", reset_xform_properties=False)
+        # self._cubes = RigidPrimView(prim_paths_expr="/World/envs/.*/cube", name="cube_view", reset_xform_properties=True)
         self._goals = RigidPrimView(prim_paths_expr="/World/envs/.*/goal", name="goal_view", reset_xform_properties=False)
 
         scene.add(self._robots)
@@ -414,6 +423,25 @@ class PCDMovingTargetTask(RLTask):
         self._sim_config.apply_articulation_settings("target",
                                                      get_prim_at_path(target.prim_path),
                                                      self._sim_config.parse_actor_config("target"))
+
+
+    def get_cube(self):
+        cube = DynamicCuboid(prim_path=self.default_zero_env_path + "/cube",
+                                 name="cube",
+                                 size=0.04,
+                                 density=1,
+                                 color=torch.tensor([255, 0, 0]),
+                                 mass=1,
+                                #  physics_material=PhysicsMaterial(
+                                #                                   prim_path="/World/physics_materials/target_material",
+                                #                                   static_friction=0.05, dynamic_friction=0.6)
+                                 physics_material=PhysicsMaterial(
+                                                                  prim_path="/World/physics_materials/target_material",
+                                                                  static_friction=0.02, dynamic_friction=0.3)
+                                 )
+        self._sim_config.apply_articulation_settings("cube",
+                                                     get_prim_at_path(cube.prim_path),
+                                                     self._sim_config.parse_actor_config("cube"))
 
     def get_goal(self):
         goal = DynamicCone(prim_path=self.default_zero_env_path + "/goal",
@@ -456,6 +484,7 @@ class PCDMovingTargetTask(RLTask):
 
 
     def get_observations(self) -> dict:
+        self.step_num += 1
         ''' retrieve point cloud data from all render products '''
         # tasks/utils/pcd_writer.py 에서 pcd sample하고 tensor로 변환해서 가져옴
         # pointcloud = self.pointcloud_listener.get_pointcloud_data()
@@ -690,17 +719,19 @@ class PCDMovingTargetTask(RLTask):
 
         # target_pos 에서 y축으로 0.2만큼 뒤로 이동한 위치로 flange를 이동시키기
         ee_pos = deepcopy(target_pos)
-        ee_pos[:, 0] += 0.05
-        ee_pos[:, 1] -= 0.1
-        ee_pos[:, 2] = 0.45
+        ee_pos[:, 0] -= 0.15    # x
+        ee_pos[:, 1] -= 0.1     # y
+        ee_pos[:, 2] = 0.35     # z
         # ee_pos = torch.tensor([ 0.6140, -0.1384,  0.4], device=self._device)
         # ee_pos = ee_pos.repeat(len(env_ids),1)
 
-        ee_ori = torch.tensor([0.707, 0.0, 0.707, 0.0], device=self._device)
+        # ee_ori = torch.tensor([0.707, 0.0, 0.707, 0.0], device=self._device)
         # ee_ori = torch.tensor([0.5, -0.5, 0.5, -0.5], device=self._device)
+        # ee_ori = torch.tensor([0.0, 0.0, 1.0, 0.0], device=self._device)
+        ee_ori = torch.tensor([0.0, -0.707, -0.707, 0.0], device=self._device)
         ee_ori = ee_ori.repeat(len(env_ids),1)
 
-        initialized_pos = Pose(ee_pos, ee_ori, name="flange")
+        initialized_pos = Pose(ee_pos, ee_ori, name="tool0")
 
         target_dof_pos = torch.empty(0).to(device=self._device)
         for i in range(initialized_pos.batch):
@@ -711,10 +742,9 @@ class PCDMovingTargetTask(RLTask):
                                                           self.robot_dof_lower_limits[:6].repeat(len(env_ids),1),
                                                           self.robot_dof_upper_limits[:6].repeat(len(env_ids),1))
         self._robots.set_joint_positions(self.robot_dof_targets[env_ids], indices=env_ids)
-        # self._robots.set_joint_positions(dof_pos, indices=indices)
+        # self._robots.set_joint_positions(dof_pos, indices=env_ids)
         self._robots.set_joint_position_targets(self.robot_dof_targets[env_ids], indices=env_ids)
         self._robots.set_joint_velocities(dof_vel, indices=env_ids)
-
 
         # bookkeeping
         self.reset_buf[env_ids] = 0
@@ -736,45 +766,45 @@ class PCDMovingTargetTask(RLTask):
         self.reset_idx(indices)
 
     def calculate_metrics(self) -> None:
-        self.stage_buf[self.progress_buf ==1] = 0   # also initializing stage_buf to 0 when progress_buf is 1.
+        # self.stage_buf[self.progress_buf ==1] = 0   # also initializing stage_buf to 0 when progress_buf is 1.
         initialized_idx = self.progress_buf == 1    # initialized index를 통해 progress_buf가 1인 경우에만 initial distance 계산
         self.completion_reward[:] = 0.0 # reset completion reward
 
-        # Stage 0: make the tool go to behind the target
-        behind_target = copy.deepcopy(self.target_pos_xyz)
-        behind_target[:, 1] -= 0.1
-        # TODO: 추후에는 y값에서 일관되게 0.1을 빼주는 것이 아니라 goal position을 고려하여 수식적으로 계산되도록 해주자.
-        current_tool_approach_distance = LA.norm(self.tool_end_point - behind_target, ord=2, dim=1)
+        # # Stage 0: make the tool go to behind the target
+        # behind_target = copy.deepcopy(self.target_pos_xyz)
+        # behind_target[:, 1] -= 0.1
+        # # TODO: 추후에는 y값에서 일관되게 0.1을 빼주는 것이 아니라 goal position을 고려하여 수식적으로 계산되도록 해주자.
+        # current_tool_approach_distance = LA.norm(self.tool_end_point - behind_target, ord=2, dim=1)
         current_tool_target_distance = LA.norm(self.tool_end_point - self.target_pos_xyz, ord=2, dim=1)
-        self.initial_tool_approach_distance[initialized_idx] = current_tool_approach_distance[initialized_idx]
-        self.initial_tool_target_distance[initialized_idx] = current_tool_target_distance[initialized_idx]  # 초기화 시점의 tool-target distance
+        # self.initial_tool_approach_distance[initialized_idx] = current_tool_approach_distance[initialized_idx]
+        # self.initial_tool_target_distance[initialized_idx] = current_tool_target_distance[initialized_idx]  # 초기화 시점의 tool-target distance
 
-        init_t_a_d = self.initial_tool_approach_distance
-        cur_t_a_d = current_tool_approach_distance
-        approach_threshold = 0.05
+        # init_t_a_d = self.initial_tool_approach_distance
+        # cur_t_a_d = current_tool_approach_distance
+        # approach_threshold = 0.05
 
-        tool_approach_distance_reward = self.relu(-(cur_t_a_d - init_t_a_d)/init_t_a_d)
+        # tool_approach_distance_reward = self.relu(-(cur_t_a_d - init_t_a_d)/init_t_a_d)
         
-        # Update stage_buf and store target position for Stage 1
-        stage1_satisfied = (self.stage_buf == 0) & (cur_t_a_d <= approach_threshold)
-        self.stage_buf[stage1_satisfied] = 1
-        # self.stage1_target_pos[stage1_satisfied] = self.target_pos_xyz[stage1_satisfied]
+        # # Update stage_buf and store target position for Stage 1
+        # stage1_satisfied = (self.stage_buf == 0) & (cur_t_a_d <= approach_threshold)
+        # self.stage_buf[stage1_satisfied] = 1
+        # # self.stage1_target_pos[stage1_satisfied] = self.target_pos_xyz[stage1_satisfied]
 
 
-        # Stage 1: tool touching the target
-        touching_threshold = 0.005 # Define a threshold for the tool touching the target
+        # # Stage 1: tool touching the target
+        # touching_threshold = 0.005 # Define a threshold for the tool touching the target
         current_target_goal_distance = LA.norm(self.goal_pos_xy - self.target_pos_xy, ord=2, dim=1)
-        self.initial_target_goal_distance[stage1_satisfied] = current_target_goal_distance[stage1_satisfied]
-        self.initial_tool_target_distance[stage1_satisfied] = current_tool_target_distance[stage1_satisfied]    # reward function에서 사용하기 위해 다시 초기화하여 저장
+        # self.initial_target_goal_distance[stage1_satisfied] = current_target_goal_distance[stage1_satisfied]
+        # self.initial_tool_target_distance[stage1_satisfied] = current_tool_target_distance[stage1_satisfied]    # reward function에서 사용하기 위해 다시 초기화하여 저장
 
         cur_t_t_d = current_tool_target_distance
         cur_t_g_d = current_target_goal_distance
         init_t_t_d = self.initial_tool_target_distance
         init_t_g_d = self.initial_target_goal_distance
         
-        tool_target_distance_reward = self.relu(-(cur_t_t_d - init_t_t_d)/init_t_t_d)
-        stage2_satisfied = (self.stage_buf == 1) & ((cur_t_g_d-init_t_g_d) > touching_threshold)
-        self.stage_buf[stage2_satisfied] = 2
+        # tool_target_distance_reward = self.relu(-(cur_t_t_d - init_t_t_d)/init_t_t_d)
+        # stage2_satisfied = (self.stage_buf == 1) & ((cur_t_g_d-init_t_g_d) > touching_threshold)
+        # self.stage_buf[stage2_satisfied] = 2
 
         # Stage 2: target reaching the goal
         target_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d)
@@ -782,18 +812,20 @@ class PCDMovingTargetTask(RLTask):
         # completion reward
         self.done_envs = cur_t_g_d <= 0.1
         # completion_reward = torch.where(self.done_envs, torch.full_like(cur_t_g_d, 100.0)[self.done_envs], torch.zeros_like(cur_t_g_d))
-        self.completion_reward[self.done_envs] = torch.full_like(cur_t_g_d, 100.0)[self.done_envs]
+        self.completion_reward[self.done_envs] = torch.full_like(cur_t_g_d, 300.0)[self.done_envs]
 
-        stage3_satisfied = (self.stage_buf == 2) & self.done_envs
+        # stage3_satisfied = (self.stage_buf == 2) & self.done_envs
 
         # Combine rewards based on the stages
-        total_reward = torch.where(self.stage_buf==0,
-                                   self.alpha * tool_approach_distance_reward,
-                                   torch.where(self.stage_buf==1,
-                                               self.beta * tool_target_distance_reward + self.alpha,
-                                               self.gamma * target_goal_distance_reward + self.alpha + self.beta + self.completion_reward))
-        
-        self.stage_buf[stage3_satisfied] = 0
+        # total_reward = torch.where(self.stage_buf==0,
+        #                            self.alpha * tool_approach_distance_reward,
+        #                            torch.where(self.stage_buf==1,
+        #                                        self.beta * tool_target_distance_reward + self.alpha,
+        #                                        self.gamma * target_goal_distance_reward + self.alpha + self.beta + self.completion_reward))            
+        total_reward = target_goal_distance_reward + self.completion_reward
+
+
+        # self.stage_buf[stage3_satisfied] = 0
 
         self.rew_buf[:] = total_reward
     
