@@ -62,10 +62,13 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 render_products = []
 
 # Load usd object
-# usd_file = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/tool.usd"
-# prim_path = "/World/tool"    # power_drill 앞에 숫자가 오면 안된다. 숫자가 있으면 오류남
-usd_file = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/cylinder/cylinder.usd"
-prim_path = "/World/cylinder"
+tool_name = 'spoon'
+usd_file = f"/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/{tool_name}/{tool_name}.usd"
+prim_path = f"/World/{tool_name}/{tool_name}"    # power_drill 앞에 숫자가 오면 안된다. 숫자가 있으면 오류남
+# usd_file = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/cylinder/cylinder.usd"
+# prim_path = "/World/cylinder"
+# usd_file = f"/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/tool.usd"
+# prim_path = "/World/mesh"
 
 with rep.new_layer():
 
@@ -96,13 +99,17 @@ with rep.new_layer():
 pointcloud_listener = PointcloudListener()
 pointcloud_writer = rep.WriterRegistry.get("PointcloudWriter")
 pointcloud_writer.initialize(listener=pointcloud_listener,
-                             output_dir="/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/cylinder",
+                             output_dir=f"/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/{tool_name}",
+                            #  output_dir="/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/cylinder",
+                            # output_dir=f"/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool",
                              pcd_sampling_num=4000,
                              pcd_normalize = False,
                              env_pos = env_pos,
                              camera_positions=camera_positions,
                              camera_orientations=camera_rotations,
-                             name="cylinder",
+                             name=tool_name,
+                            #  name="cylinder",
+                            #  name="mesh",
                              device=device,
                             )
 
