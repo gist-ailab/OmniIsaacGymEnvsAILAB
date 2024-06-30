@@ -13,7 +13,7 @@ from skrl.memories.torch import RandomMemory
 from skrl.models.torch import DeterministicMixin, GaussianMixin, Model
 from skrl.resources.preprocessors.torch import RunningStandardScaler
 from skrl.resources.schedulers.torch import KLAdaptiveRL
-from skrl.trainers.torch import SequentialTrainer
+from skrl.trainers.torch import SequentialTrainer, ParallelTrainer
 from skrl.utils import set_seed
 
 import wandb
@@ -22,17 +22,19 @@ import wandb
 from omniisaacgymenvs.model.shared import Shared
 
 # seed for reproducibility
-seed = 42
+seed = 82
 set_seed(seed)  # e.g. `set_seed(42)` for fixed seed
 
-env = load_omniverse_isaacgym_env(task_name="PCDMovingTarget")
+# env = load_omniverse_isaacgym_env(task_name="PCDMovingObject")
+env = load_omniverse_isaacgym_env(task_name="PCDMovingObjectMulti")
 # env.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(env.observation_space.shape[0],3), dtype=np.float32)
 env = wrap_env(env)
+# env2 = wrap_env(env2)
 
 device = env.device
 
 # instantiate a memory as rollout buffer (any memory can be used for this)
-memory = RandomMemory(memory_size=16, num_envs=env.num_envs, device=device)
+memory = RandomMemory(memory_size=16, num_envs=env.num_envs*env._env.task.robot_num, device=device)
 
 # instantiate the agent's models (function approximators).
 # PPO requires 2 models, visit its documentation for more details
@@ -76,21 +78,27 @@ cfg["value_preprocessor"] = RunningStandardScaler
 cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
 
 # logging to TensorBoard and write checkpoints (in timesteps)
-cfg["experiment"]["write_interval"] = 100
-cfg["experiment"]["checkpoint_interval"] = 500
+cfg["experiment"]["write_interval"] = 50
+cfg["experiment"]["checkpoint_interval"] = 100
+# cfg["experiment"]["write_interval"] = 10
+# cfg["experiment"]["checkpoint_interval"] = 10
 
 now = datetime.now()
 formatted_date = now.strftime("%y%m%d_%H%M%S")
 cfg["experiment"]["experiment_name"] = f"{formatted_date}_PCD_Moving_Target"
+# cfg["experiment"]["experiment_name"] = f"240610_134535_PCD_Moving_Target_continue"
 
 cfg["experiment"]["directory"] = "runs/torch/PCDMovingTarget"
 cfg["experiment"]["checkpoint_dir"] = "checkpoints"
 
-cfg["experiment"]["wandb"] = True
-cfg["experiment"]["wandb_kwargs"] = {
-    "project": "ToolMani",
-    "save_code": True,
-}
+# cfg["experiment"]["wandb"] = True
+# cfg["experiment"]["wandb_kwargs"] = {
+#     "project": "ToolMani",
+#     "save_code": True,
+#     "sync_tensorboard": True,
+#     # "id": "x7mmaz8nnw=nwuserpsh9002",
+#     # "resume": True,
+# }
 
 agent = PPO(models=models,
             memory=memory,
@@ -98,39 +106,40 @@ agent = PPO(models=models,
             observation_space=env.observation_space,
             action_space=env.action_space,
             device=device)
-# path = './runs/torch/MovingTarget/Pointnet2+MLP/checkpoints/best_agent.pt'
+# path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/PCDMovingTarget/240623_235519_PCD_Moving_Target/checkpoints/best_agent.pt'
 # agent.load(path)
 
 # configure and instantiate the RL trainer
-cfg_trainer = {"timesteps": 50000, "headless": False}
+cfg_trainer = {"timesteps": 30000, "headless": False}
 trainer = SequentialTrainer(cfg=cfg_trainer, env=env, agents=agent)
+# trainer = ParallelTrainer(cfg=cfg_trainer, env=env, agents=agent)
 
-if cfg["experiment"]["wandb_kwargs"]["save_code"]:
-    wandb.save('/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/tasks/moving_target_pcd.py')
+# if cfg["experiment"]["wandb_kwargs"]["save_code"]:
+#     wandb.save('/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/tasks/moving_target_pcd.py')
 
 # start training
-trainer.train()
+# trainer.train()
 
-if cfg["experiment"]["wandb_kwargs"]["save_code"]:
-    pth_path = os.path.join(cfg["experiment"]["directory"], cfg["experiment"]["experiment_name"])
-    wandb.save(f'{pth_path}/checkpoints/best_agent.pt')
-    '''
-    학습 중간에 저장하고 싶으면
-    /home/bak/anaconda3/envs/isaac-sim/lib/python3.10/site-packages/skrl/trainers/torch/base.py
-    위의 post-interaction 뒤에 저장해야 한다.
-    post-interaction 구현은 /home/bak/anaconda3/envs/isaac-sim/lib/python3.10/site-packages/skrl/agents/torch/base.py에 있음       
-    '''
+# if cfg["experiment"]["wandb_kwargs"]["save_code"]:
+#     pth_path = os.path.join(cfg["experiment"]["directory"], cfg["experiment"]["experiment_name"])
+#     wandb.save(f'{pth_path}/checkpoints/best_agent.pt')
+#     '''
+#     학습 중간에 저장하고 싶으면
+#     /home/bak/anaconda3/envs/isaac-sim/lib/python3.10/site-packages/skrl/trainers/torch/base.py
+#     위의 post-interaction 뒤에 저장해야 한다.
+#     post-interaction 구현은 /home/bak/anaconda3/envs/isaac-sim/lib/python3.10/site-packages/skrl/agents/torch/base.py에 있음       
+#     '''
 
 # # ---------------------------------------------------------
 # # comment the code above: `trainer.train()`, and...
 # # uncomment the following lines to evaluate a trained agent
 # # ---------------------------------------------------------
-# from skrl.utils.huggingface import download_model_from_huggingface
+# # from skrl.utils.huggingface import download_model_from_huggingface
 
-# # download the trained agent's checkpoint from Hugging Face Hub and load it
-# # path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-FrankaCabinet-PPO", filename="agent.pt")
-# path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/PCDMovingTarget/240514_232756_PCD_Moving_Target/checkpoints/agent_31500.pt'
-# agent.load(path)
+# download the trained agent's checkpoint from Hugging Face Hub and load it
+# path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-FrankaCabinet-PPO", filename="agent.pt")
+path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/PCDMovingTarget/240623_235519_PCD_Moving_Target/checkpoints/best_agent.pt'
+agent.load(path)
 
-# # start evaluation
-# trainer.eval()
+# start evaluation
+trainer.eval()
