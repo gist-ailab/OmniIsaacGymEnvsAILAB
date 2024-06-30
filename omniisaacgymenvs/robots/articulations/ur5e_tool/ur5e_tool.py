@@ -47,8 +47,7 @@ class UR5eTool(Robot):
             isaac_root_path = os.path.join(os.path.expanduser('~'), ".local/share/ov/pkg/isaac_sim-2023.1.1")
             if isaac_root_path is None:
                 carb.log_error("Could not find Isaac Sim assets folder")
-            self._usd_path = isaac_root_path + "/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/ur5e_tool.usd"
-            # self._usd_path = isaac_root_path + "OmniIsaacGymEnvsAILAB/omniisaacgymenvs/skrl_examples/moving_target_point_cloud/ur5e/usd/ur5e_tool_wo_rigidbody.usd"
+            self._usd_path = isaac_root_path + f"/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/{name}.usd"
 
         add_reference_to_stage(self._usd_path, prim_path)
         
@@ -67,11 +66,11 @@ class UR5eTool(Robot):
             "forearm_link/wrist_1_joint",
             "wrist_1_link/wrist_2_joint",
             "wrist_2_link/wrist_3_joint",
-            "flange/grasped_position",
-            "flange_tool_rot_x/flange_revolute_x",
-            "flange_tool_rot_z/flange_revolute_z",
-            "flange_tool_rot_y/flange_revolute_y",
-            "flange_tool_tran_y/tool_prismatic",
+            "gripper/grasped_position",  # grasped position on handle
+            "gripper_tool_yaw/gripper_revolute_yaw",
+            "gripper_tool_pitch/gripper_revolute_pitch",
+            "gripper_tool_roll/gripper_revolute_roll",
+            "gripper_tool_prismatic/tool_prismatic",    # prismatic along rod axis
         ]
 
 
