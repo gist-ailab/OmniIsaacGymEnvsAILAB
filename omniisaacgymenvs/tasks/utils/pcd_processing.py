@@ -13,8 +13,7 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
 
-def get_pcd(self,
-            ply_path,
+def get_pcd(ply_path,
             num_envs,
             pcd_sampling_num=500,
             device='cuda',
@@ -29,24 +28,27 @@ def get_pcd(self,
         o3d_pcd.rotate(R, center=(0, 0, 0))
     o3d_downsampled_pcd = o3d_pcd.farthest_point_down_sample(pcd_sampling_num)
     np_downsampled_points = np.array(o3d_downsampled_pcd.points)
-    tool_pcd = torch.from_numpy(np_downsampled_points).to(device)
-    tool_pcd = tool_pcd.unsqueeze(0).repeat(num_envs, 1, 1)
-    return tool_pcd.float()
+    downsampled_pcd = torch.from_numpy(np_downsampled_points).to(device)
+    downsampled_pcd = downsampled_pcd.unsqueeze(0).repeat(num_envs, 1, 1)
+    return downsampled_pcd.float()
 
-''' point cloud registration for tool '''
-# TODO: 아래 기능 함수화
-# region point cloud registration for tool
-# get transformation matrix from base to tool
-T_base_to_tool = torch.eye(4, device=self._device).unsqueeze(0).repeat(self._num_envs, 1, 1)
-T_base_to_tool[:, :3, :3] = tool_rot.clone().detach()
-T_base_to_tool[:, :3, 3] = tool_pos.clone().detach()
 
-B, N, _ = self.tool_pcd.shape
-# Convert points to homogeneous coordinates by adding a dimension with ones
-homogeneous_points = torch.cat([self.tool_pcd, torch.ones(B, N, 1, device=self.tool_pcd.device)], dim=-1)
-# Perform batch matrix multiplication
-transformed_points_homogeneous = torch.bmm(homogeneous_points, T_base_to_tool.transpose(1, 2))
-# Convert back from homogeneous coordinates by removing the last dimension
-tool_pcd_transformed = transformed_points_homogeneous[..., :3]
-# endregion
-''' point cloud registration for tool '''
+
+def pcd_registration(point_cloud,
+                     pos,
+                     rot,
+                     num_envs,
+                     device='cuda',):
+    ''' point cloud registration for tool '''
+    T_base_to_tool = torch.eye(4, device=device).unsqueeze(0).repeat(num_envs, 1, 1)
+    T_base_to_tool[:, :3, :3] = rot.clone().detach()
+    T_base_to_tool[:, :3, 3] = pos.clone().detach()
+
+    B, N, _ = point_cloud.shape
+    # Convert points to homogeneous coordinates by adding a dimension with ones
+    homogeneous_points = torch.cat([point_cloud, torch.ones(B, N, 1, device=device)], dim=-1)
+    # Perform batch matrix multiplication
+    transformed_points_homogeneous = torch.bmm(homogeneous_points, T_base_to_tool.transpose(1, 2))
+    # Convert back from homogeneous coordinates by removing the last dimension
+    pcd_transformed = transformed_points_homogeneous[..., :3]
+    return pcd_transformed
