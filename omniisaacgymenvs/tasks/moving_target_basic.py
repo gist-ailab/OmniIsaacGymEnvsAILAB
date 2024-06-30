@@ -8,7 +8,7 @@ enable_extension("omni.replicator.isaac")   # required by PytorchListener
 # enable_extension("omni.kit.window.viewport")  # enable legacy viewport interface
 
 from omniisaacgymenvs.tasks.base.rl_task import RLTask
-from omniisaacgymenvs.robots.articulations.ur5e_tool import UR5eTool
+from omniisaacgymenvs.robots.articulations.ur5e_tool.ur5e_tool import UR5eTool
 from omniisaacgymenvs.robots.articulations.views.ur5e_view import UR5eView
 
 import omni
