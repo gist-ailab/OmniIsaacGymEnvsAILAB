@@ -113,7 +113,8 @@ class PCDMovingObjectTask(RLTask):
             tool_name = name.split('_')[1]
             tool_ply_path = f"/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/{tool_name}/{tool_name}.ply"
             tool_pcd = get_pcd(tool_ply_path, self._num_envs, self._pcd_sampling_num, device=self.cfg["rl_device"], tools=True)
-            globals()[f"{tool_name}_pcd"] = tool_pcd    # save tool pcd as global variable such as spatular_pcd, spoon_pcd etc.
+            setattr(self, f"{tool_name}_pcd", tool_pcd) # save tool pcd as global variable such as spatular_pcd, spoon_pcd etc.
+            # globals()[f"{tool_name}_pcd"] = tool_pcd    
 
         # TODO: if the environment has multiple objects, the object pcd should be loaded in the loop
         # get object pcd
@@ -198,12 +199,26 @@ class PCDMovingObjectTask(RLTask):
         # self._rl_task_setup_scene(scene)
 
         # self.robots_dict = {}
+        # self._ur5e_fork = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_fork", name=f"ur5e_fork_view", visibilities=torch.tensor([False]).repeat(self._num_envs))
+        # self._ur5e_knife = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_knife", name=f"ur5e_knife_view", visibilities=torch.tensor([False]).repeat(self._num_envs))
+        # self._ur5e_ladle = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_ladle", name=f"ur5e_ladle_view", visibilities=torch.tensor([False]).repeat(self._num_envs))
+        # self._ur5e_spatular = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_spatular", name=f"ur5e_spatular_view", visibilities=torch.tensor([False]).repeat(self._num_envs))
+        # self._ur5e_spoon = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_spoon", name=f"ur5e_spoon_view", visibilities=torch.tensor([False]).repeat(self._num_envs))
+        # self._ur5e_tool = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_tool", name=f"ur5e_tool_view", visibilities=torch.tensor([False]).repeat(self._num_envs))
+        default_translations=torch.tensor([0.0, 0.0, 10.0]).repeat(self._num_envs,1)
+        visibilities = torch.tensor([False]).repeat(self._num_envs)
+        self._ur5e_fork = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_fork", name=f"ur5e_fork_view", translations=default_translations, visibilities=visibilities)
+        self._ur5e_knife = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_knife", name=f"ur5e_knife_view", translations=default_translations, visibilities=visibilities)
+        self._ur5e_ladle = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_ladle", name=f"ur5e_ladle_view", translations=default_translations, visibilities=visibilities)
+        self._ur5e_spatular = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_spatular", name=f"ur5e_spatular_view", translations=default_translations, visibilities=visibilities)
+        self._ur5e_spoon = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_spoon", name=f"ur5e_spoon_view", translations=default_translations, visibilities=visibilities)
+        self._ur5e_tool = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_tool", name=f"ur5e_tool_view", translations=default_translations, visibilities=visibilities)
         for idx, name in enumerate(self.robot_list):
             # Create an instance variable for each name in robot_list
-            setattr(self, f"_{name}s", UR5eView(prim_paths_expr=f"/World/envs/.*/{name}", name=f"{name}_view"))
-            scene.add(getattr(self, f"_{name}s"))
-            scene.add(getattr(self, f"_{name}s")._flanges)
-            scene.add(getattr(self, f"_{name}s")._tools)
+            # setattr(self, f"_{name}s", UR5eView(prim_paths_expr=f"/World/envs/.*/{name}", name=f"{name}_view"))
+            scene.add(getattr(self, f"_{name}"))
+            scene.add(getattr(self, f"_{name}")._flanges)
+            scene.add(getattr(self, f"_{name}")._tools)
 
         self._object = RigidPrimView(prim_paths_expr="/World/envs/.*/object", name="object_view", reset_xform_properties=False)
         scene.add(self._object)
@@ -257,22 +272,52 @@ class PCDMovingObjectTask(RLTask):
         self.jacobians = torch.zeros((self._num_envs, 15, 6, 11), device=self._device)
         ''' ['shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint', 'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint',
              'grasped_position', 'flange_revolute_yaw', 'flange_revolute_pitch', 'flange_revolute_roll', 'tool_prismatic'] '''
+        '''jacobian : (self._num_envs, num_of_bodies-1, wrench, num of joints)
+        num_of_bodies - 1 due to start from 0 index
+        '''
         self.flange_pos = torch.zeros((self._num_envs, 3), device=self._device)
         self.flange_rot = torch.zeros((self._num_envs, 4), device=self._device)
+        self.object_pos = torch.zeros((self._num_envs, 3), device=self._device)
+        self.object_rot = torch.zeros((self._num_envs, 4), device=self._device)
+
 
     def post_reset(self):
-        self.num_robot_dofs = self._ur5e_forks.num_dof  # all robots have the same dof
+        self.num_robot_dofs = self._ur5e_fork.num_dof  # all robots have the same dof
         
-        dof_limits = self._ur5e_forks.get_dof_limits()  # every robot has the same dof limits
+        dof_limits = self._ur5e_fork.get_dof_limits()  # every robot has the same dof limits
         # dof_limits = dof_limits.repeat(self.robot_num, 1, 1)
+
+        # initialize robot's local poses to be above the ground and distinguish the visibility along with the env number
+        entire_env_ids = torch.arange(self._num_envs, dtype=torch.int32, device=self._device)
+        # Calculate the size of each sub-env size
+        sub_env_size = len(entire_env_ids) // len(self.robot_list)
+
+        # Calculate the remainder
+        remainder = len(entire_env_ids) % len(self.robot_list)
+
+        # Initialize the result list
+        self.separated_envs = []
+
+        start = 0
+        for i, _ in enumerate(self.robot_list):
+            end = start + sub_env_size + (1 if i < remainder else 0)
+            self.separated_envs.append(entire_env_ids[start:end])
+            start = end
+
+        for idx, sub_envs in enumerate(self.separated_envs):
+            robot_name = self.robot_list[idx]
+            pos = torch.tensor([0.0, 0.0, 0.0], device=self._device).repeat(len(sub_envs),1)
+            env_pos = self._env_pos[sub_envs]
+            getattr(self, f"_{robot_name}").set_world_poses(pos+env_pos, indices=sub_envs)
+            getattr(self, f"_{robot_name}").set_visibilities(visibilities=[True]*len(sub_envs), indices=sub_envs)
 
         self.robot_dof_lower_limits = dof_limits[0, :, 0].to(device=self._device)
         self.robot_dof_upper_limits = dof_limits[0, :, 1].to(device=self._device)
         self.robot_dof_speed_scales = torch.ones_like(self.robot_dof_lower_limits)
         self.robot_dof_targets = torch.zeros((self._num_envs, self.num_robot_dofs), dtype=torch.float, device=self._device)
         
-        self._objects.enable_rigid_body_physics()
-        self._objects.enable_gravities()
+        self._object.enable_rigid_body_physics()
+        self._object.enable_gravities()
 
         indices = torch.arange(self._num_envs, dtype=torch.int64, device=self._device)
         self.reset_idx(indices)
@@ -287,7 +332,7 @@ class PCDMovingObjectTask(RLTask):
             pass
         else:
             self.actions = actions.clone().to(self._device)
-        env_ids_int32 = torch.arange(self._ur5e_forks.count,
+        env_ids_int32 = torch.arange(self._ur5e_fork.count,
                                      dtype=torch.int32,
                                      device=self._device)
 
@@ -297,7 +342,7 @@ class PCDMovingObjectTask(RLTask):
         elif self._control_space == "cartesian":
             goal_position = self.flange_pos + self.actions[:, :3] / 70.0
             goal_orientation = self.flange_rot + self.actions[:, 3:] / 70.0
-            flange_link_idx = self._ur5e_forks.body_names.index(self._flange_link)
+            flange_link_idx = self._ur5e_fork.body_names.index(self._flange_link)
             delta_dof_pos = omniverse_isaacgym_utils.ik(
                                                         jacobian_end_effector=self.jacobians[:, flange_link_idx, :, :6],
                                                         current_position=self.flange_pos,
@@ -316,9 +361,10 @@ class PCDMovingObjectTask(RLTask):
         self.robot_dof_targets[:, 8] = torch.deg2rad(torch.tensor(self.tool_rot_z, device=self._device))
         self.robot_dof_targets[:, 9] = torch.deg2rad(torch.tensor(self.tool_rot_y, device=self._device))
         ### TODO: 나중에는 self.reset_idx에 tool pose가 episode마다 random position으로 바뀌도록 할 것. 환경의 index를 이용해야 할 것 같다.
-
+        
+        ### TODO: robot_dof_target은 현재 ground에 내려와있는 로봇에 반영하도록 해야 함.
         for name in self.robot_list:
-            getattr(self, f"_{name}s").set_joint_positions(self.robot_dof_targets, indices=env_ids_int32)
+            getattr(self, f"_{name}").set_joint_positions(self.robot_dof_targets, indices=env_ids_int32)
 
         # self._targets.enable_rigid_body_physics()
         # self._targets.enable_rigid_body_physics(indices=env_ids_int32)
@@ -327,19 +373,44 @@ class PCDMovingObjectTask(RLTask):
     def reset_idx(self, env_ids) -> None:
         env_ids = env_ids.to(dtype=torch.int32)
 
+        # Calculate the size of each sub-env size
+        sub_env_size = len(env_ids) // len(self.robot_list)
+
+        # Calculate the remainder
+        remainder = len(env_ids) % len(self.robot_list)
+
+        # Initialize the result list
+        separated_envs = [] # separated environments from targeted reset environments
+
+        start = 0
+        for i, _ in enumerate(self.robot_list):
+            end = start + sub_env_size + (1 if i < remainder else 0)
+            separated_envs.append(env_ids[start:end])
+            start = end
+
+
+        # reset object
+        position = torch.tensor(self._object_position, device=self._device)
+        object_pos = position.repeat(len(env_ids),1)
+        orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)
+        object_ori = orientation.repeat(len(env_ids),1)
+        self._object.set_world_poses(object_pos + self._env_pos[env_ids],
+                                      object_ori,
+                                      indices=env_ids)
+        
+        # reset goal
+        goal_mark_pos = torch.tensor(self._goal_mark, device=self._device)
+        goal_mark_pos = goal_mark_pos.repeat(len(env_ids),1)
+        self._goal.set_world_poses(goal_mark_pos + self._env_pos[env_ids], indices=env_ids)
+        goal_pos = self._goal.get_local_poses()
+        self.goal_pos_xy = goal_pos[0][:, [0, 1]]
+
+
         # reset robot
-        default_pos = self.robot_default_dof_pos.unsqueeze(0).repeat(len(env_ids), 1)   # non-randomized
-
-
-        # TODO: 환경 index에 따라 정해진 로봇이 reset되도록 수정
-        dof_pos = torch.zeros((len(env_ids), self._robots.num_dof), device=self._device)
-        dof_pos[:, :] = default_pos
-        dof_vel = torch.zeros((len(env_ids), self._robots.num_dof), device=self._device)
-        self.robot_dof_targets[env_ids, :] = pos
-        self._robots.set_joint_positions(self.robot_dof_targets[env_ids], indices=env_ids)
-
-        # target_pos 에서 y축으로 0.2만큼 뒤로 이동한 위치로 flange를 이동시키기
-        ee_pos = deepcopy(target_pos)
+        dof_vel = torch.zeros((len(env_ids), self._ur5e_spoon.num_dof), device=self._device)    # reset to zero velocity
+        
+        # object_pos 에서 y축으로 0.2만큼 뒤로 이동한 위치로 flange를 이동시키기
+        ee_pos = deepcopy(object_pos)
         ee_pos[:, 0] -= 0.15    # x
         ee_pos[:, 1] -= 0.1     # y
         ee_pos[:, 2] = 0.35     # z
@@ -361,90 +432,38 @@ class PCDMovingObjectTask(RLTask):
         self.robot_dof_targets[env_ids, :6] = torch.clamp(target_dof_pos,
                                                           self.robot_dof_lower_limits[:6].repeat(len(env_ids),1),
                                                           self.robot_dof_upper_limits[:6].repeat(len(env_ids),1))
+        
+        for idx, sub_envs in enumerate(separated_envs):
+            robot_name = self.robot_list[idx]
+            print(f"Sub-envs {idx} (robot: {robot_name}): {sub_envs}")
+            assert sub_envs.max().item() < self._num_envs, "Sub-env index out of bounds"
+            print(f"dof_vel shape: {dof_vel.shape}, sub_envs shape: {sub_envs.shape}")
+            getattr(self, f"_{robot_name}").set_joint_positions(self.robot_dof_targets[sub_envs], indices=sub_envs)
+            getattr(self, f"_{robot_name}").set_joint_position_targets(self.robot_dof_targets[sub_envs], indices=sub_envs)
+            getattr(self, f"_{robot_name}").set_joint_velocities(dof_vel[sub_envs], indices=sub_envs)
+
+            # getattr(self, f"_{robot_name}").set_local_poses(translations=torch.tensor([0.0, 0.0, 0.0],device=self._device).repeat(len(sub_envs),1),
+            #                                                 indices=sub_envs)
+            # getattr(self, f"_{robot_name}").set_visibilities(visibilities=[True]*len(sub_envs), indices=sub_envs)
 
 
 
 
 
+        #     self._ur5e_fork.set_joint_positions(self.robot_dof_targets, indices=sub_envs)
+        #     self._ur5e_fork.set_joint_position_targets(self.robot_dof_targets, indices=sub_envs)
+        #     self._ur5e_fork.set_joint_velocities(dof_vel, indices=sub_envs)
+        #     self._ur5e_fork.set_local_poses(translations=torch.tensor([0.0, 0.0, 0.0], device=self._device), indices=sub_envs)
+        #     self._ur5e_fork.set_visibilities(visibilities=[True]*len(sub_envs), indices=sub_envs)
+        # self._ur5e_fork.set_joint_positions(self.robot_dof_targets, indices=env_ids)
+        # self._ur5e_fork.set_joint_position_targets(self.robot_dof_targets, indices=env_ids)
+        # self._ur5e_fork.set_joint_velocities(dof_vel, indices=env_ids)
+        # self._ur5e_fork.set_local_poses(translations=torch.tensor([0.0, 0.0, 0.0], device=self._device), indices=env_ids)
+        # self._ur5e_fork.set_visibilities(visibilities=[True]*len(env_ids), indices=env_ids)
 
-
-        # reset object
-        position = torch.tensor(self._object_position, device=self._device)
-        object_pos = position.repeat(len(env_ids),1)
-
-        orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)
-        object_ori = orientation.repeat(len(env_ids),1)
-        self._objects.set_world_poses(object_pos + self._env_pos[env_ids],
-                                      object_ori,
-                                      indices=env_ids)
-        # self._objects.enable_rigid_body_physics()
-
-        # reset goal
-        goal_mark_pos = torch.tensor(self._goal_mark, device=self._device)
-        goal_mark_pos = goal_mark_pos.repeat(len(env_ids),1)
-        self._goals.set_world_poses(goal_mark_pos + self._env_pos[env_ids], indices=env_ids)
-        goal_pos = self._goals.get_local_poses()
-        self.goal_pos_xy = goal_pos[0][:, [0, 1]]
-
-
-
-
-        for idx, name in enumerate(self.robot_list):
-
-            world_env_ids = env_ids[idx*self.num_envs:(idx+1)*self.num_envs]
-            robot_env_ids = torch.arange(self.num_envs, dtype=torch.int32, device=self._device)
-
-            robot_dof_targets = self.robot_dof_targets[(idx)*self.num_envs:(idx+1)*self.num_envs, :]
-
-            # reset target
-            position = torch.tensor(self._object_position, device=self._device)
-            target_pos = position.repeat(len(robot_env_ids), 1)
-            orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)
-            target_ori = orientation.repeat(len(robot_env_ids),1)
-            self.robots_dict[name]['target_view'].set_world_poses(target_pos + self.robots_dict[name]['offset'] + self._env_pos[robot_env_ids],
-                                                               target_ori,
-                                                               indices=robot_env_ids)
-            
-            goal_mark_pos = torch.tensor(self._goal_mark, device=self._device)
-            goal_mark_pos = goal_mark_pos.repeat(len(robot_env_ids),1)
-            self.robots_dict[name]['goal_view'].set_world_poses(goal_mark_pos + self.robots_dict[name]['offset'] + self._env_pos[robot_env_ids],
-                                                             indices=robot_env_ids)
-            
-            # reset robot
-            # reset to default pose            
-            # self.robots_dict[name]['robot_view'].set_joint_positions(self.robot_default_dof_pos.unsqueeze(0).repeat(len(env_ids)), indices=env_ids)
-            
-            # move to start position near the target
-            # TODO: start position을 random position으로 고정되도록 변수화. orientation이 물체를 바라보도록 설정
-            ee_pos = deepcopy(target_pos)
-            ee_pos[:, 0] -= 0.2    # x
-            ee_pos[:, 1] -= 0.2     # y
-            ee_pos[:, 2] = 0.35     # z
-
-            ee_ori = torch.tensor([0.579, -0.579, -0.406, 0.406], device=self._device)
-            ee_ori = ee_ori.repeat(len(robot_env_ids),1)
-
-            initialized_pos = Pose(ee_pos, ee_ori, name="tool0")
-            
-            target_dof_pos = torch.empty(0).to(device=self._device)
-            for i in range(initialized_pos.batch):
-                result = self.ik_solver.solve_single(initialized_pos[i])
-                #IK를 못 풀었을 때를 대비하여 result.success로 체크하고 false인 경우에는 기본 값으로 설정
-                if result.success:
-                    target_dof_pos = torch.cat((target_dof_pos, result.solution[result.success]), dim=0)
-                else:
-                    print(f"IK solver failed. Initialize a robot in {name} env {robot_env_ids[i]} with default pose.")
-                    target_dof_pos = torch.cat((target_dof_pos, self.robot_default_dof_pos[:6].unsqueeze(0)), dim=0)
-            robot_dof_targets[:, :6] = torch.clamp(target_dof_pos,
-                                                    self.robot_dof_lower_limits[:6].repeat(len(robot_env_ids),1),
-                                                    self.robot_dof_upper_limits[:6].repeat(len(robot_env_ids),1))
-            self.robots_dict[name]['robot_view'].set_joint_positions(robot_dof_targets, indices=robot_env_ids)
-            self.robots_dict[name]['robot_view'].set_joint_position_targets(robot_dof_targets, indices=robot_env_ids)
-            self.robots_dict[name]['robot_view'].set_joint_velocities(torch.zeros((len(robot_env_ids), self.num_robot_dofs), device=self._device), indices=robot_env_ids)
-
-            # bookkeeping
-            self.reset_buf[sub_env_ids[idx]] = 0
-            self.progress_buf[sub_env_ids[idx]] = 0
+        # bookkeeping
+        self.reset_buf[env_ids] = 0
+        self.progress_buf[env_ids] = 0
 
     def get_observations(self) -> dict:
         self._env.render()  # add for get point cloud on headless mode
@@ -454,65 +473,62 @@ class PCDMovingObjectTask(RLTask):
         # pointcloud = self.pointcloud_listener.get_pointcloud_data()
 
         tools_pcd_flattened = torch.empty(0).to(device=self._device)
-        targets_pcd_flattened = torch.empty(0).to(device=self._device)
-        target_pcd_concat = torch.empty(0).to(device=self._device)  # concatenate target point cloud for getting xyz position
+        objects_pcd_flattened = torch.empty(0).to(device=self._device)
+        object_pcd_concat = torch.empty(0).to(device=self._device)  # concatenate target point cloud for getting xyz position
         self.goal_pos = torch.empty(0).to(device=self._device)  # concatenate goal position for getting xy position
         robots_dof_pos = torch.empty(0).to(device=self._device)
         robots_dof_vel = torch.empty(0).to(device=self._device)
 
-        for idx, name in enumerate(self.robot_list):
-            self.flange_pos[idx*self.num_envs:(idx+1)*self.num_envs], self.flange_rot[idx*self.num_envs:(idx+1)*self.num_envs] = self.robots_dict[name]['robot_view'].get_local_poses()
-            target_pos, target_rot_quaternion = self.robots_dict[name]['target_view'].get_local_poses()
-            target_rot = quaternion_to_matrix(target_rot_quaternion)
-            tool_pos, tool_rot_quaternion = self.robots_dict[name]['robot_view']._tools.get_local_poses()
-            tool_rot = quaternion_to_matrix(tool_rot_quaternion)
+        self._ur5e_fork._flanges.get_local_poses()
 
-            # concat tool point cloud
-            tool_pcd_transformed = pcd_registration(self.robots_dict[name]['tool_pcd'],
+        for idx, sub_envs in enumerate(self.separated_envs):
+            robot_name = self.robot_list[idx]
+            self.flange_pos[self.separated_envs[idx], :] = getattr(self, f'_{robot_name}')._flanges.get_local_poses()[0][self.separated_envs[idx], :]
+            self.flange_rot[self.separated_envs[idx], :] = getattr(self, f'_{robot_name}')._flanges.get_local_poses()[1][self.separated_envs[idx], :]
+            
+            tool_pos = getattr(self, f'_{robot_name}')._tools.get_local_poses()[0][self.separated_envs[idx], :]
+            tool_rot_quaternion = getattr(self, f'_{robot_name}')._tools.get_local_poses()[1][self.separated_envs[idx], :]
+            tool_rot = quaternion_to_matrix(tool_rot_quaternion)
+            object_pos = self._object.get_local_poses()[0][self.separated_envs[idx], :]
+            object_rot_quaternion = self._object.get_local_poses()[1][self.separated_envs[idx], :]
+            object_rot = quaternion_to_matrix(object_rot_quaternion)
+
+            tool_name = robot_name.split('_')[1]
+            # concat tool point cloud per robot
+            tool_pcd_transformed = pcd_registration(getattr(self, f"{tool_name}_pcd")[sub_envs],
                                                     tool_pos,
                                                     tool_rot,
-                                                    self.num_envs,
+                                                    len(sub_envs),
                                                     device=self._device)
-            tool_pcd_flattend = tool_pcd_transformed.contiguous().view(self._num_envs, -1)
+            tool_pcd_flattend = tool_pcd_transformed.contiguous().view(len(sub_envs), -1)
             tools_pcd_flattened = torch.cat((tools_pcd_flattened, tool_pcd_flattend), dim=0)
 
-            # concat target point cloud
-            target_pcd_transformed = pcd_registration(self.robots_dict[name]['target_pcd'],
-                                                      target_pos,
-                                                      target_rot,
-                                                      self.num_envs,
+            # concat target point cloud per robot
+            # TODO: if the environment has multiple objects, the different object pcd should be loaded in the loop
+            object_pcd_transformed = pcd_registration(self.object_pcd[sub_envs],
+                                                      object_pos,
+                                                      object_rot,
+                                                      len(sub_envs),
                                                       device=self._device)
-            target_pcd_concat = torch.cat((target_pcd_concat, target_pcd_transformed), dim=0)   # concat for calculating xyz position
-            target_pcd_flattend = target_pcd_transformed.contiguous().view(self._num_envs, -1)
-            targets_pcd_flattened = torch.cat((targets_pcd_flattened, target_pcd_flattend), dim=0)
+            object_pcd_concat = torch.cat((object_pcd_concat, object_pcd_transformed), dim=0)   # concat for calculating xyz position
+            object_pcd_flattend = object_pcd_transformed.contiguous().view(len(sub_envs), -1)
+            objects_pcd_flattened = torch.cat((object_pcd_flattend, objects_pcd_flattened), dim=0)
 
-            self.goal_pos = torch.cat((self.goal_pos, self.robots_dict[name]['goal_view'].get_local_poses()[0]), dim=0)
-
-            # TODO: get farthest point from the tool to the goal
+            self.goal_pos = torch.cat((self.goal_pos, self._goal.get_local_poses()[0][self.separated_envs[idx]]), dim=0)
 
             # get robot dof position and velocity from 1st to 6th joint
-            robots_dof_pos = torch.cat((robots_dof_pos, self.robots_dict[name]['robot_view'].get_joint_positions(clone=False)[:, 0:6]), dim=0)
-            robots_dof_vel = torch.cat((robots_dof_vel, self.robots_dict[name]['robot_view'].get_joint_velocities(clone=False)[:, 0:6]), dim=0)
+            robot_joint_positions = getattr(self, f'_{robot_name}').get_joint_positions(clone=False)[sub_envs, 0:6]
+            robot_joint_velocity = getattr(self, f'_{robot_name}').get_joint_velocities(clone=False)[sub_envs, 0:6]
+            robots_dof_pos = torch.cat((robots_dof_pos, robot_joint_positions), dim=0)
+            robots_dof_vel = torch.cat((robots_dof_vel, robot_joint_velocity), dim=0)
             # rest of the joints are not used for control. They are fixed joints at each episode.
-        
-        self.target_pos_xyz = torch.mean(target_pcd_concat, dim=1)
-        self.target_pos_xy = self.target_pos_xyz[:, [0, 1]]
 
-        self.goal_pos_xy = self.goal_pos[:, [0, 1]]
+            if self._control_space == "cartesian":
+                # set jacobians from each sub-environment robot
+                self.jacobians[sub_envs] = getattr(self, f'_{robot_name}').get_jacobians()[sub_envs]
 
-        '''self.target_pos_xy는 [num_envs * robot_num, 2]의 형태로 되어야 함'''
-
-        # # normalize robot_dof_pos
-        # dof_pos_scaled = 2.0 * (robots_dof_pos - self.robot_dof_lower_limits) \
-        #     / (self.robot_dof_upper_limits - self.robot_dof_lower_limits) - 1.0   # normalized by [-1, 1]
-        # dof_pos_scaled = (robots_dof_pos - self.robot_dof_lower_limits) \
-        #                 /(self.robot_dof_upper_limits - self.robot_dof_lower_limits)    # normalized by [0, 1]
-        dof_pos_scaled = robots_dof_pos    # non-normalized
-
-        # # normalize robot_dof_vel
-        # dof_vel_scaled = robots_dof_vel * self._dof_vel_scale
-        # generalization_noise = torch.rand((dof_vel_scaled.shape[0], 6), device=self._device) + 0.5
-        dof_vel_scaled = robots_dof_vel    # non-normalized
+        self.object_pos_xyz = torch.mean(object_pcd_concat, dim=1)
+        self.object_pos_xy = self.object_pos_xyz[:, [0, 1]]
 
         '''
         아래 순서로 최종 obs_buf에 concat. 첫 차원은 환경 갯수
@@ -532,39 +548,34 @@ class PCDMovingObjectTask(RLTask):
                                 #   tool_pcd_transformed.contiguous().view(self._num_envs, -1),   # [NE, N*3], point cloud
                                 #   target_pcd_transformed.contiguous().view(self._num_envs, -1), # [NE, N*3], point cloud
                                   tools_pcd_flattened,
-                                  targets_pcd_flattened,
-                                  dof_pos_scaled,                                               # [NE, 6]
+                                  objects_pcd_flattened,
+                                  robots_dof_pos,                                               # [NE, 6]
                                 #   dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
-                                  dof_vel_scaled[:, :6],                                        # [NE, 6]
+                                  robots_dof_vel,                                               # [NE, 6]
                                   self.flange_pos,                                              # [NE, 3]
                                   self.flange_rot,                                              # [NE, 4]
                                   self.goal_pos_xy,                                             # [NE, 2]
                                  ), dim=1)
 
-        if self._control_space == "cartesian":
-            ''' 위에있는 jacobian 차원을 참고해서 값을 넣어주어야 함. 로봇 종류에 맞추어 넣어주어야 할 것 같다.
-             '''
-            for idx, name in enumerate(self.robot_list):
-                self.jacobians[idx*self.num_envs:(idx+1)*self.num_envs] = self.robots_dict[name]['robot_view'].get_jacobians(clone=False)
-
         # TODO: name???? 
-        return {self.robots_dict['ur5e_fork']['robot_view'].name: {"obs_buf": self.obs_buf}}
+        # return {self.robots_dict['ur5e_fork']['robot_view'].name: {"obs_buf": self.obs_buf}}
+        return self.obs_buf
 
 
     def calculate_metrics(self) -> None:
         initialized_idx = self.progress_buf == 1    # initialized index를 통해 progress_buf가 1인 경우에만 initial distance 계산
         self.completion_reward[:] = 0.0 # reset completion reward
-        current_target_goal_distance = LA.norm(self.goal_pos_xy - self.target_pos_xy, ord=2, dim=1)
-        self.initial_target_goal_distance[initialized_idx] = current_target_goal_distance[initialized_idx]
+        current_object_goal_distance = LA.norm(self.goal_pos_xy - self.object_pos_xy, ord=2, dim=1)
+        self.initial_object_goal_distance[initialized_idx] = current_object_goal_distance[initialized_idx]
 
-        init_t_g_d = self.initial_target_goal_distance
-        cur_t_g_d = current_target_goal_distance
-        target_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d)
+        init_o_g_d = self.initial_object_goal_distance
+        cur_o_g_d = current_object_goal_distance
+        target_goal_distance_reward = self.relu(-(cur_o_g_d - init_o_g_d)/init_o_g_d)
 
         # completion reward
-        self.done_envs = cur_t_g_d <= 0.1
+        self.done_envs = cur_o_g_d <= 0.1
         # completion_reward = torch.where(self.done_envs, torch.full_like(cur_t_g_d, 100.0)[self.done_envs], torch.zeros_like(cur_t_g_d))
-        self.completion_reward[self.done_envs] = torch.full_like(cur_t_g_d, 300.0)[self.done_envs]
+        self.completion_reward[self.done_envs] = torch.full_like(cur_o_g_d, 300.0)[self.done_envs]
 
         total_reward = target_goal_distance_reward + self.completion_reward
 
@@ -581,10 +592,10 @@ class PCDMovingObjectTask(RLTask):
         reset = torch.where(self.flange_pos[:, 0] > self.x_max, ones, reset)
         reset = torch.where(self.flange_pos[:, 1] > self.y_max, ones, reset)
         reset = torch.where(self.flange_pos[:, 2] > 0.5, ones, reset)
-        reset = torch.where(self.target_pos_xy[:, 0] < self.x_min, ones, reset)
-        reset = torch.where(self.target_pos_xy[:, 1] < self.y_min, ones, reset)
-        reset = torch.where(self.target_pos_xy[:, 0] > self.x_max, ones, reset)
-        reset = torch.where(self.target_pos_xy[:, 1] > self.y_max, ones, reset)
+        reset = torch.where(self.object_pos_xy[:, 0] < self.x_min, ones, reset)
+        reset = torch.where(self.object_pos_xy[:, 1] < self.y_min, ones, reset)
+        reset = torch.where(self.object_pos_xy[:, 0] > self.x_max, ones, reset)
+        reset = torch.where(self.object_pos_xy[:, 1] > self.y_max, ones, reset)
         # reset = torch.where(self.target_pos_xy[:, 2] > 0.5, ones, reset)
 
         # target reached
