@@ -1,3 +1,4 @@
+import torch
 from typing import Optional
 
 from omni.isaac.core.articulations import ArticulationView
@@ -6,11 +7,21 @@ from omni.isaac.core.prims import RigidPrimView
 class UR5eView(ArticulationView):
     def __init__(self,
                  prim_paths_expr: str,
-                 name: str = "ur5e_tool_view") -> None:
-        super().__init__(prim_paths_expr=prim_paths_expr, name=name, reset_xform_properties=False)
+                 name: str = "ur5e_spoon_view",
+                 translations = None,
+                 visibilities=None) -> None:
+        super().__init__(prim_paths_expr=prim_paths_expr,
+                         name=name,
+                         translations=translations,                         
+                         visibilities=visibilities,
+                         reset_xform_properties=False,
+                         )
 
-        robot_name = name.split("_")
-        robot_name = robot_name[0] + "_" + robot_name[1]
+        if name == "robot_view":
+            robot_name = name.split("_")[0]
+        else:
+            robot_name = name.split("_")
+            robot_name = robot_name[0] + "_" + robot_name[1]
 
         self._flanges = RigidPrimView(
             prim_paths_expr=f"/World/envs/.*/{robot_name}/tool0",
