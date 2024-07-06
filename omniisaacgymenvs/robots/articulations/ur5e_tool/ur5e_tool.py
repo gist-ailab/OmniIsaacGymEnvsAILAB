@@ -47,7 +47,12 @@ class UR5eTool(Robot):
             isaac_root_path = os.path.join(os.path.expanduser('~'), ".local/share/ov/pkg/isaac_sim-2023.1.1")
             if isaac_root_path is None:
                 carb.log_error("Could not find Isaac Sim assets folder")
-            self._usd_path = isaac_root_path + f"/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/{name}.usd"
+            if name == "robot":
+                self._usd_path = isaac_root_path + f"/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/ur5e_tool.usd"
+            else:
+                self._usd_path = isaac_root_path + f"/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/{name}.usd"
+            
+
 
         add_reference_to_stage(self._usd_path, prim_path)
         
