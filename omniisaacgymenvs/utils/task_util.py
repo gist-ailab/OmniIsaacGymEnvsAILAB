@@ -49,7 +49,8 @@ def import_tasks():
     from omniisaacgymenvs.tasks.reaching_target import BasicReachingTargetTask   ### BSH
     from omniisaacgymenvs.tasks.reaching_target_pcd import PCDReachingTargetTask   ### BSH
     from omniisaacgymenvs.tasks.moving_object_pcd import PCDMovingObjectTask   ### BSH
-    from omniisaacgymenvs.tasks.moving_obect_pcd_multi import PCDMovingObjectTaskMulti   ### BSH    
+    from omniisaacgymenvs.tasks.moving_obect_pcd_multi import PCDMovingObjectTaskMulti   ### BSH
+    from omniisaacgymenvs.tasks.moving_object_pcd_single import PCDMovingObjectSingleTask   ### BSH
     from omniisaacgymenvs.tasks.warp.ant import AntLocomotionTask as AntLocomotionTaskWarp
     from omniisaacgymenvs.tasks.warp.cartpole import CartpoleTask as CartpoleTaskWarp
     from omniisaacgymenvs.tasks.warp.humanoid import HumanoidLocomotionTask as HumanoidLocomotionTaskWarp
@@ -78,6 +79,7 @@ def import_tasks():
         "PCDReachingTarget": PCDReachingTargetTask,   ### BSH
         "PCDMovingObject": PCDMovingObjectTask,   ### BSH
         "PCDMovingObjectMulti": PCDMovingObjectTaskMulti,   ### BSH
+        "PCDMovingObjectSingle": PCDMovingObjectSingleTask,   ### BSH
         "ShadowHandOpenAI_FF": ShadowHandTask,
         "ShadowHandOpenAI_LSTM": ShadowHandTask,
     }
