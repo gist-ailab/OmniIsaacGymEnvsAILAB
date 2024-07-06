@@ -1,3 +1,5 @@
+###################### BSH`
+
 import torch
 from torch import linalg as LA
 import numpy as np
@@ -71,7 +73,8 @@ class PCDMovingObjectTask(RLTask):
         self.dt = 1 / 120.0
         self._env = env
 
-        self.robot_list = ['ur5e_tool', 'ur5e_fork', 'ur5e_knife', 'ur5e_ladle', 'ur5e_spatular', 'ur5e_spoon']
+        # self.robot_list = ['ur5e_tool', 'ur5e_fork', 'ur5e_knife', 'ur5e_ladle', 'ur5e_spatular', 'ur5e_spoon']
+        self.robot_list = ['ur5e_tool']
         self.robot_num = len(self.robot_list)        
         self.initial_object_goal_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
         self.completion_reward = torch.zeros(self._num_envs).to(self.cfg["rl_device"])
@@ -198,27 +201,19 @@ class PCDMovingObjectTask(RLTask):
         super().set_up_scene(scene)
         # self._rl_task_setup_scene(scene)
 
-        # self.robots_dict = {}
-        # self._ur5e_fork = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_fork", name=f"ur5e_fork_view", visibilities=torch.tensor([False]).repeat(self._num_envs))
-        # self._ur5e_knife = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_knife", name=f"ur5e_knife_view", visibilities=torch.tensor([False]).repeat(self._num_envs))
-        # self._ur5e_ladle = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_ladle", name=f"ur5e_ladle_view", visibilities=torch.tensor([False]).repeat(self._num_envs))
-        # self._ur5e_spatular = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_spatular", name=f"ur5e_spatular_view", visibilities=torch.tensor([False]).repeat(self._num_envs))
-        # self._ur5e_spoon = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_spoon", name=f"ur5e_spoon_view", visibilities=torch.tensor([False]).repeat(self._num_envs))
-        # self._ur5e_tool = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_tool", name=f"ur5e_tool_view", visibilities=torch.tensor([False]).repeat(self._num_envs))
-        default_translations=torch.tensor([0.0, 0.0, 10.0]).repeat(self._num_envs,1)
+        default_translations=torch.tensor([0.0, 0.0, 0.0]).repeat(self._num_envs,1)
         visibilities = torch.tensor([False]).repeat(self._num_envs)
-        self._ur5e_fork = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_fork", name=f"ur5e_fork_view", translations=default_translations, visibilities=visibilities)
-        self._ur5e_knife = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_knife", name=f"ur5e_knife_view", translations=default_translations, visibilities=visibilities)
-        self._ur5e_ladle = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_ladle", name=f"ur5e_ladle_view", translations=default_translations, visibilities=visibilities)
-        self._ur5e_spatular = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_spatular", name=f"ur5e_spatular_view", translations=default_translations, visibilities=visibilities)
-        self._ur5e_spoon = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_spoon", name=f"ur5e_spoon_view", translations=default_translations, visibilities=visibilities)
-        self._ur5e_tool = UR5eView(prim_paths_expr=f"/World/envs/.*/ur5e_tool", name=f"ur5e_tool_view", translations=default_translations, visibilities=visibilities)
+        
         for idx, name in enumerate(self.robot_list):
             # Create an instance variable for each name in robot_list
-            # setattr(self, f"_{name}s", UR5eView(prim_paths_expr=f"/World/envs/.*/{name}", name=f"{name}_view"))
+            setattr(self, f"_{name}", UR5eView(prim_paths_expr=f"/World/envs/.*/{name}",
+                                                name=f"{name}_view",
+                                                translations=default_translations,
+                                                visibilities=visibilities))
             scene.add(getattr(self, f"_{name}"))
             scene.add(getattr(self, f"_{name}")._flanges)
             scene.add(getattr(self, f"_{name}")._tools)
+        self.ref_robot = getattr(self, f"_{self.robot_list[0]}")
 
         self._object = RigidPrimView(prim_paths_expr="/World/envs/.*/object", name="object_view", reset_xform_properties=False)
         scene.add(self._object)
@@ -280,11 +275,14 @@ class PCDMovingObjectTask(RLTask):
         self.object_pos = torch.zeros((self._num_envs, 3), device=self._device)
         self.object_rot = torch.zeros((self._num_envs, 4), device=self._device)
 
+        self.empty_separated_envs = [torch.empty(0, dtype=torch.int32, device=self._device) for _ in self.robot_list]
+        self.total_env_ids = torch.arange(self._num_envs, dtype=torch.int32, device=self._device)
+
 
     def post_reset(self):
-        self.num_robot_dofs = self._ur5e_fork.num_dof  # all robots have the same dof
+        self.num_robot_dofs = self.ref_robot.num_dof  # all robots have the same dof
         
-        dof_limits = self._ur5e_fork.get_dof_limits()  # every robot has the same dof limits
+        dof_limits = self.ref_robot.get_dof_limits()  # every robot has the same dof limits
         # dof_limits = dof_limits.repeat(self.robot_num, 1, 1)
 
         # initialize robot's local poses to be above the ground and distinguish the visibility along with the env number
@@ -315,6 +313,7 @@ class PCDMovingObjectTask(RLTask):
         self.robot_dof_upper_limits = dof_limits[0, :, 1].to(device=self._device)
         self.robot_dof_speed_scales = torch.ones_like(self.robot_dof_lower_limits)
         self.robot_dof_targets = torch.zeros((self._num_envs, self.num_robot_dofs), dtype=torch.float, device=self._device)
+        self.zero_joint_velocities = torch.zeros((self._num_envs, self.num_robot_dofs), dtype=torch.float, device=self._device)
         
         self._object.enable_rigid_body_physics()
         self._object.enable_gravities()
@@ -328,13 +327,10 @@ class PCDMovingObjectTask(RLTask):
         if len(reset_env_ids) > 0:
             self.reset_idx(reset_env_ids)
 
-        if self.step_num == 0:
-            pass
-        else:
-            self.actions = actions.clone().to(self._device)
-        env_ids_int32 = torch.arange(self._ur5e_fork.count,
-                                     dtype=torch.int32,
-                                     device=self._device)
+        # if self.step_num == 0:
+        #     pass
+        # else:
+        self.actions = actions.clone().to(self._device)
 
         if self._control_space == "joint":
             dof_targets = self.robot_dof_targets[:, :6] + self.robot_dof_speed_scales[:6] * self.dt * self.actions * self._action_scale
@@ -342,9 +338,9 @@ class PCDMovingObjectTask(RLTask):
         elif self._control_space == "cartesian":
             goal_position = self.flange_pos + self.actions[:, :3] / 70.0
             goal_orientation = self.flange_rot + self.actions[:, 3:] / 70.0
-            flange_link_idx = self._ur5e_fork.body_names.index(self._flange_link)
+            flange_link_idx = self.ref_robot.body_names.index(self._flange_link)
             delta_dof_pos = omniverse_isaacgym_utils.ik(
-                                                        jacobian_end_effector=self.jacobians[:, flange_link_idx, :, :6],
+                                                        jacobian_end_effector=self.jacobians[:, flange_link_idx-1, :, :6],
                                                         current_position=self.flange_pos,
                                                         current_orientation=self.flange_rot,
                                                         goal_position=goal_position,
@@ -362,32 +358,37 @@ class PCDMovingObjectTask(RLTask):
         self.robot_dof_targets[:, 9] = torch.deg2rad(torch.tensor(self.tool_rot_y, device=self._device))
         ### TODO: 나중에는 self.reset_idx에 tool pose가 episode마다 random position으로 바뀌도록 할 것. 환경의 index를 이용해야 할 것 같다.
         
-        ### TODO: robot_dof_target은 현재 ground에 내려와있는 로봇에 반영하도록 해야 함.
-        for name in self.robot_list:
-            getattr(self, f"_{name}").set_joint_positions(self.robot_dof_targets, indices=env_ids_int32)
-
+        for idx, sub_envs in enumerate(self.separated_envs):
+            # print(f"Sub-envs {idx} (robot: {self.robot_list[idx]}): {sub_envs}")
+            getattr(self, f"_{self.robot_list[idx]}").set_joint_positions(self.robot_dof_targets[sub_envs], indices=sub_envs)
         # self._targets.enable_rigid_body_physics()
         # self._targets.enable_rigid_body_physics(indices=env_ids_int32)
         # self._targets.enable_gravities(indices=env_ids_int32)
 
+    def split_env_ids(self, env_ids):
+        # 결과를 저장할 리스트 초기화
+        separated_envs = copy.deepcopy(self.empty_separated_envs)
+        
+        # env_ids를 정렬
+        sorted_env_ids = torch.sort(env_ids)[0]
+        
+        # env_ids를 순서대로 그룹에 할당
+        group_size = (len(self.total_env_ids) + self.robot_num - 1) // self.robot_num
+        for i, env_id in enumerate(sorted_env_ids):
+            group_idx = ((env_id.item() % len(self.total_env_ids)) // group_size) % self.robot_num
+            separated_envs[group_idx] = torch.cat([separated_envs[group_idx], env_id.unsqueeze(0)])
+        
+        return separated_envs
+
+
     def reset_idx(self, env_ids) -> None:
         env_ids = env_ids.to(dtype=torch.int32)
 
-        # Calculate the size of each sub-env size
-        sub_env_size = len(env_ids) // len(self.robot_list)
+        # Number of robots (sub-envs)
+        num_robots = len(self.robot_list)
 
-        # Calculate the remainder
-        remainder = len(env_ids) % len(self.robot_list)
-
-        # Initialize the result list
-        separated_envs = [] # separated environments from targeted reset environments
-
-        start = 0
-        for i, _ in enumerate(self.robot_list):
-            end = start + sub_env_size + (1 if i < remainder else 0)
-            separated_envs.append(env_ids[start:end])
-            start = end
-
+        # Split env_ids using the split_env_ids function
+        separated_envs = self.split_env_ids(env_ids)
 
         # reset object
         position = torch.tensor(self._object_position, device=self._device)
@@ -404,10 +405,6 @@ class PCDMovingObjectTask(RLTask):
         self._goal.set_world_poses(goal_mark_pos + self._env_pos[env_ids], indices=env_ids)
         goal_pos = self._goal.get_local_poses()
         self.goal_pos_xy = goal_pos[0][:, [0, 1]]
-
-
-        # reset robot
-        dof_vel = torch.zeros((len(env_ids), self._ur5e_spoon.num_dof), device=self._device)    # reset to zero velocity
         
         # object_pos 에서 y축으로 0.2만큼 뒤로 이동한 위치로 flange를 이동시키기
         ee_pos = deepcopy(object_pos)
@@ -434,32 +431,15 @@ class PCDMovingObjectTask(RLTask):
                                                           self.robot_dof_upper_limits[:6].repeat(len(env_ids),1))
         
         for idx, sub_envs in enumerate(separated_envs):
+            if sub_envs.numel() == 0:
+                continue  # Skip if sub_envs is empty
             robot_name = self.robot_list[idx]
-            print(f"Sub-envs {idx} (robot: {robot_name}): {sub_envs}")
+            # print(f"Sub-envs {idx} (robot: {robot_name}): {sub_envs}")
             assert sub_envs.max().item() < self._num_envs, "Sub-env index out of bounds"
-            print(f"dof_vel shape: {dof_vel.shape}, sub_envs shape: {sub_envs.shape}")
+            # print(f"dof_vel shape: {self.zero_joint_velocities.shape}, sub_envs shape: {sub_envs.shape}")
             getattr(self, f"_{robot_name}").set_joint_positions(self.robot_dof_targets[sub_envs], indices=sub_envs)
             getattr(self, f"_{robot_name}").set_joint_position_targets(self.robot_dof_targets[sub_envs], indices=sub_envs)
-            getattr(self, f"_{robot_name}").set_joint_velocities(dof_vel[sub_envs], indices=sub_envs)
-
-            # getattr(self, f"_{robot_name}").set_local_poses(translations=torch.tensor([0.0, 0.0, 0.0],device=self._device).repeat(len(sub_envs),1),
-            #                                                 indices=sub_envs)
-            # getattr(self, f"_{robot_name}").set_visibilities(visibilities=[True]*len(sub_envs), indices=sub_envs)
-
-
-
-
-
-        #     self._ur5e_fork.set_joint_positions(self.robot_dof_targets, indices=sub_envs)
-        #     self._ur5e_fork.set_joint_position_targets(self.robot_dof_targets, indices=sub_envs)
-        #     self._ur5e_fork.set_joint_velocities(dof_vel, indices=sub_envs)
-        #     self._ur5e_fork.set_local_poses(translations=torch.tensor([0.0, 0.0, 0.0], device=self._device), indices=sub_envs)
-        #     self._ur5e_fork.set_visibilities(visibilities=[True]*len(sub_envs), indices=sub_envs)
-        # self._ur5e_fork.set_joint_positions(self.robot_dof_targets, indices=env_ids)
-        # self._ur5e_fork.set_joint_position_targets(self.robot_dof_targets, indices=env_ids)
-        # self._ur5e_fork.set_joint_velocities(dof_vel, indices=env_ids)
-        # self._ur5e_fork.set_local_poses(translations=torch.tensor([0.0, 0.0, 0.0], device=self._device), indices=env_ids)
-        # self._ur5e_fork.set_visibilities(visibilities=[True]*len(env_ids), indices=env_ids)
+            getattr(self, f"_{robot_name}").set_joint_velocities(self.zero_joint_velocities[sub_envs], indices=sub_envs)
 
         # bookkeeping
         self.reset_buf[env_ids] = 0
@@ -478,8 +458,6 @@ class PCDMovingObjectTask(RLTask):
         self.goal_pos = torch.empty(0).to(device=self._device)  # concatenate goal position for getting xy position
         robots_dof_pos = torch.empty(0).to(device=self._device)
         robots_dof_vel = torch.empty(0).to(device=self._device)
-
-        self._ur5e_fork._flanges.get_local_poses()
 
         for idx, sub_envs in enumerate(self.separated_envs):
             robot_name = self.robot_list[idx]
@@ -525,8 +503,11 @@ class PCDMovingObjectTask(RLTask):
 
             if self._control_space == "cartesian":
                 # set jacobians from each sub-environment robot
-                self.jacobians[sub_envs] = getattr(self, f'_{robot_name}').get_jacobians()[sub_envs]
+                self.jacobians[sub_envs] = getattr(self, f'_{robot_name}').get_jacobians(clone=False)[sub_envs]
 
+        # self.visualize_pcd(tool_pcd_transformed, object_pcd_transformed,
+        #                    tool_pos, tool_rot, object_pos, object_rot,
+        #                    self.goal_pos)
         self.object_pos_xyz = torch.mean(object_pcd_concat, dim=1)
         self.object_pos_xy = self.object_pos_xyz[:, [0, 1]]
 
@@ -605,143 +586,72 @@ class PCDMovingObjectTask(RLTask):
         self.reset_buf = torch.where(self.progress_buf >= self._max_episode_length - 1, ones, reset)
 
 
+    def visualize_pcd(self,
+                      tool_pcd_transformed,
+                      object_pcd_transformed,
+                      tool_pos, tool_rot,
+                      object_pos, object_rot,
+                      goal_pos,
+                    #   farthest_idx
+                      ):
+        view_idx = 0
 
-
-    # def visualize_point_cloud(self, view_idx, lidar_position):
-    #     '''
-    #     args:
-    #         view_idx: index of the cloner
-    #         lidar_position: position of the lidar
-    #     '''
-    #     flange_pos, flange_rot = self._flanges.get_local_poses()
-
-    #     lidar_prim_path = self._point_cloud[view_idx].prim_path
-    #     point_cloud = self._point_cloud[view_idx]._lidar_sensor_interface.get_point_cloud_data(lidar_prim_path)
-    #     semantic = self._point_cloud[view_idx]._lidar_sensor_interface.get_semantic_data(lidar_prim_path)
-
-    #     pcl_reshape = np.reshape(point_cloud, (point_cloud.shape[0]*point_cloud.shape[1], 3))
-    #     flange_pos_np = flange_pos[view_idx].cpu().numpy()
-    #     flange_ori_np = flange_rot[view_idx].cpu().numpy()
-
-    #     pcl_semantic = np.reshape(semantic, -1)        
-
-
-    #     v3d = o3d.utility.Vector3dVector
-
-    #     # get point cloud
-    #     pcd = o3d.geometry.PointCloud()
-    #     pcd.points = v3d(pcl_reshape)
-
-    #     # get sampled point cloud
-    #     idx = pcu.downsample_point_cloud_poisson_disk(pcl_reshape, num_samples=int(0.2*pcl_reshape.shape[0]))
-    #     pcl_reshape_sampled = pcl_reshape[idx]
-    #     sampled_pcd = o3d.geometry.PointCloud()
-    #     sampled_pcd.points = v3d(pcl_reshape_sampled)
-
-    #     # get lidar frame. lidar frame is a world [0, 0, 0] frame
-    #     lidar_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.2, origin=np.array([0.0, 0.0, 0.0]))
-
-    #     # get base pose    
-    #     T_b = np.eye(4)
-    #     # TODO: get rotation matrix from USD
-    #     # R_b = lidar_coord.get_rotation_matrix_from_xyz((np.pi/6, 0, -np.pi/2))
-    #     R_b = lidar_coord.get_rotation_matrix_from_xyz((np.pi/9, 0, -np.pi/2))  # rotation relationship between lidar and base
-    #     T_b[:3, :3] = R_b
-    #     T_b[:3, 3] = lidar_position # acquired position from prim_path is [0,0,0]
-    #     T_b_inv = np.linalg.inv(T_b)
-    #     base_coord = copy.deepcopy(lidar_coord).transform(T_b_inv)
-    #     # o3d.visualization.draw_geometries([pcd, lidar_coord, base_coord])
-
-    #     # get ee pose
-    #     T_ee = np.eye(4)
-    #     R_ee = base_coord.get_rotation_matrix_from_quaternion(flange_ori_np)
-    #     T_ee[:3, :3] = R_ee
-    #     T_ee[:3, 3] = flange_pos_np
-    #     T_l_e = np.matmul(T_b_inv, T_ee)
-    #     flange_coord = copy.deepcopy(lidar_coord).transform(T_l_e)
-    #     # o3d.visualization.draw_geometries([pcd, lidar_coord, base_coord, flange_coord],
-    #     #                                   window_name=f'scene of env_{view_idx}')
-
-
-    #     # print(f'env index: {view_idx}', np.unique(pcl_semantic))
-
-    #     # 아래는 마지막 index만 가시화 (도구 가시화를 의도함)
-    #     # index = np.unique(pcl_semantic)[-1]
-    #     # print(f'show index: {index}\n')
-    #     # semantic = np.where(pcl_semantic==index)[0]
-    #     # pcd_semantic = o3d.geometry.PointCloud()
-    #     # pcd_semantic.points = o3d.utility.Vector3dVector(pcl_reshape[semantic])
-    #     # o3d.visualization.draw_geometries([pcd_semantic, lidar_coord, base_coord, flange_coord],
-    #     #                                     window_name=f'semantic_{index} of env_{view_idx}')
+        base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
+        tool_pos_np = tool_pos[view_idx].cpu().numpy()
+        tool_rot_np = tool_rot[view_idx].cpu().numpy()
+        obj_pos_np = object_pos[view_idx].cpu().numpy()
+        obj_rot_np = object_rot[view_idx].cpu().numpy()
         
+        tool_transformed_pcd_np = tool_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
+        tool_transformed_point_cloud = o3d.geometry.PointCloud()
+        tool_transformed_point_cloud.points = o3d.utility.Vector3dVector(tool_transformed_pcd_np)
+        T_t = np.eye(4)
+        T_t[:3, :3] = tool_rot_np
+        T_t[:3, 3] = tool_pos_np
+        tool_coord = copy.deepcopy(base_coord).transform(T_t)
 
-    #     for i in np.unique(pcl_semantic):
-    #         semantic = np.where(pcl_semantic==i)[0]
-    #         pcd_semantic = o3d.geometry.PointCloud()
-    #         pcd_semantic.points = o3d.utility.Vector3dVector(pcl_reshape[semantic])
-    #         o3d.visualization.draw_geometries([pcd_semantic, lidar_coord, base_coord, flange_coord],
-    #                                           window_name=f'semantic_{i} of env_{view_idx}')
+        tool_end_point = o3d.geometry.TriangleMesh().create_sphere(radius=0.01)
+        tool_end_point.paint_uniform_color([0, 0, 1])
+        # farthest_pt = tool_transformed_pcd_np[farthest_idx.detach().cpu().numpy()][view_idx]
+        # T_t_p = np.eye(4)
+        # T_t_p[:3, 3] = farthest_pt
+        # tool_tip_position = copy.deepcopy(tool_end_point).transform(T_t_p)
 
-    ##################### ####################################
-    ################# visualize point cloud #################
-    # view_idx = 0
+        obj_transformed_pcd_np = object_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
+        obj_transformed_point_cloud = o3d.geometry.PointCloud()
+        obj_transformed_point_cloud.points = o3d.utility.Vector3dVector(obj_transformed_pcd_np)
+        T_o = np.eye(4)
 
-    # base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
-    # tool_pos_np = tool_pos[view_idx].cpu().numpy()
-    # tool_rot_np = tool_rot[view_idx].cpu().numpy()
-    # tgt_pos_np = target_pos[view_idx].cpu().numpy()
-    # tgt_rot_np = target_rot[view_idx].cpu().numpy()
-    
-    # tool_transformed_pcd_np = tool_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
-    # tool_transformed_point_cloud = o3d.geometry.PointCloud()
-    # tool_transformed_point_cloud.points = o3d.utility.Vector3dVector(tool_transformed_pcd_np)
-    # T_t = np.eye(4)
-    # T_t[:3, :3] = tool_rot_np
-    # T_t[:3, 3] = tool_pos_np
-    # tool_coord = copy.deepcopy(base_coord).transform(T_t)
+        # R_b = tgt_rot_np.get_rotation_matrix_from_xyz((np.pi/2, 0, 0))
+        T_o[:3, :3] = obj_rot_np
+        # T_o[:3, :3] = R_b
+        T_o[:3, 3] = obj_pos_np
+        obj_coord = copy.deepcopy(base_coord).transform(T_o)
 
-    # tool_end_point = o3d.geometry.TriangleMesh().create_sphere(radius=0.01)
-    # tool_end_point.paint_uniform_color([0, 0, 1])
-    # farthest_pt = tool_transformed_pcd_np[farthest_idx.detach().cpu().numpy()][view_idx]
-    # T_t_p = np.eye(4)
-    # T_t_p[:3, 3] = farthest_pt
-    # tool_tip_position = copy.deepcopy(tool_end_point).transform(T_t_p)
+        goal_pos_np = goal_pos[view_idx].cpu().numpy()
+        goal_cone = o3d.geometry.TriangleMesh.create_cone(radius=0.01, height=0.03)
+        goal_cone.paint_uniform_color([0, 1, 0])
+        T_g_p = np.eye(4)
+        T_g_p[:3, 3] = goal_pos_np
+        goal_position = copy.deepcopy(goal_cone).transform(T_g_p)
 
-    # tgt_transformed_pcd_np = target_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
-    # tgt_transformed_point_cloud = o3d.geometry.PointCloud()
-    # tgt_transformed_point_cloud.points = o3d.utility.Vector3dVector(tgt_transformed_pcd_np)
-    # T_o = np.eye(4)
+        # goal_pos_xy_np = copy.deepcopy(goal_pos_np)
+        # goal_pos_xy_np[2] = self.target_height
+        # goal_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+        # goal_sphere.paint_uniform_color([1, 0, 0])
+        # T_g = np.eye(4)
+        # T_g[:3, 3] = goal_pos_xy_np
+        # goal_position_xy = copy.deepcopy(goal_sphere).transform(T_g)
 
-    # # R_b = tgt_rot_np.get_rotation_matrix_from_xyz((np.pi/2, 0, 0))
-    # T_o[:3, :3] = tgt_rot_np
-    # # T_o[:3, :3] = R_b
-    # T_o[:3, 3] = tgt_pos_np
-    # tgt_coord = copy.deepcopy(base_coord).transform(T_o)
-
-    # self.goal_pos, _ = self._goals.get_local_poses()
-    # goal_pos_np = self.goal_pos[view_idx].cpu().numpy()
-    # goal_cone = o3d.geometry.TriangleMesh.create_cone(radius=0.01, height=0.03)
-    # goal_cone.paint_uniform_color([0, 1, 0])
-    # T_g_p = np.eye(4)
-    # T_g_p[:3, 3] = goal_pos_np
-    # goal_position = copy.deepcopy(goal_cone).transform(T_g_p)
-
-    # goal_pos_xy_np = copy.deepcopy(goal_pos_np)
-    # goal_pos_xy_np[2] = self.target_height
-    # goal_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
-    # goal_sphere.paint_uniform_color([1, 0, 0])
-    # T_g = np.eye(4)
-    # T_g[:3, 3] = goal_pos_xy_np
-    # goal_position_xy = copy.deepcopy(goal_sphere).transform(T_g)
-
-    # o3d.visualization.draw_geometries([base_coord,
-    #                                    tool_transformed_point_cloud,
-    #                                    tgt_transformed_point_cloud,
-    #                                    tool_tip_position,
-    #                                    tool_coord,
-    #                                    tgt_coord,
-    #                                    goal_position,
-    #                                    goal_position_xy],
-    #                                     window_name=f'point cloud')
-    ################# visualize point cloud #################
-    #########################################################
+        o3d.visualization.draw_geometries([base_coord,
+                                        tool_transformed_point_cloud,
+                                        obj_transformed_point_cloud,
+                                        # tool_tip_position,
+                                        tool_coord,
+                                        obj_coord,
+                                        goal_position,
+                                        # goal_position_xy
+                                        ],
+                                            window_name=f'point cloud')
+        ################ visualize point cloud #################
+        ########################################################
