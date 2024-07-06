@@ -20,9 +20,13 @@ def get_robot(robot_name,
                                            get_prim_at_path(ur5e_tool.prim_path),
                                            sim_config.parse_actor_config(robot_name))
 
-def get_object(name, sim_config, default_zero_env_path):
+def get_object(name,
+               sim_config,
+               default_zero_env_path,
+               translation=torch.tensor([0.0, 0.0, 0.0])):
     target = DynamicCylinder(prim_path=default_zero_env_path + f"/{name}",
                              name=f"{name}",
+                            #  translation=translation,
                              radius=0.04,
                              height=0.05,
                              density=1,
@@ -34,26 +38,30 @@ def get_object(name, sim_config, default_zero_env_path):
                              physics_material=PhysicsMaterial(
                                  prim_path=f"/World/physics_materials/{name}_material",
                                  static_friction=0.02, dynamic_friction=0.3)
-                                )
+                            )
     
     sim_config.apply_articulation_settings(f"{name}",
                                            get_prim_at_path(target.prim_path),
                                            sim_config.parse_actor_config(f"{name}"))
 
 
-def get_cube(name, sim_config, default_zero_env_path):
+def get_cube(name,
+             sim_config,
+             default_zero_env_path,
+             translation=torch.tensor([0.0, 0.0, 0.0])):
     cube = DynamicCuboid(prim_path=default_zero_env_path + f"/{name}",
-                                name=f"{name}",
-                                size=0.04,
-                                density=1,
-                                color=torch.tensor([255, 0, 0]),
-                                mass=1,
+                         name=f"{name}",
+                        #  translation=translation,
+                         size=0.04,
+                         density=1,
+                         color=torch.tensor([255, 0, 0]),
+                         mass=1,
                             #  physics_material=PhysicsMaterial(
                             #                                   prim_path="/World/physics_materials/target_material",
                             #                                   static_friction=0.05, dynamic_friction=0.6)
-                                physics_material=PhysicsMaterial(
-                                                                prim_path=f"/World/physics_materials/{name}_material",
-                                                                static_friction=0.02, dynamic_friction=0.3)
+                         physics_material=PhysicsMaterial(
+                            prim_path=f"/World/physics_materials/{name}_material",
+                            static_friction=0.02, dynamic_friction=0.3)
                                 )
     sim_config.apply_articulation_settings("cube",
                                            get_prim_at_path(cube.prim_path),
