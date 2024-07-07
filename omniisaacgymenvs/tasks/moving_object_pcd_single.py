@@ -9,11 +9,23 @@ from collections import OrderedDict
 from omni.isaac.core.utils.extensions import enable_extension
 enable_extension("omni.replicator.isaac")   # required for PytorchListener
 
+# CuRobo
+from curobo.geom.types import WorldConfig
+from curobo.types.base import TensorDeviceType
+from curobo.types.math import Pose
+from curobo.types.robot import RobotConfig
+from curobo.util_file import get_robot_configs_path, get_world_configs_path, join_path, load_yaml
+from curobo.wrap.reacher.ik_solver import IKSolver, IKSolverConfig
+torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
 # enable_extension("omni.kit.window.viewport")  # enable legacy viewport interface
 import omni.replicator.core as rep
 from omniisaacgymenvs.tasks.base.rl_task import RLTask
 from omniisaacgymenvs.robots.articulations.ur5e_tool.ur5e_tool import UR5eTool
 from omniisaacgymenvs.robots.articulations.views.ur5e_view import UR5eView
+from omniisaacgymenvs.tasks.utils.get_toolmani_assets import get_robot, get_object, get_goal
 from omniisaacgymenvs.tasks.utils.pcd_processing import get_pcd, pcd_registration
 from omniisaacgymenvs.tasks.utils.pcd_writer import PointcloudWriter
 from omniisaacgymenvs.tasks.utils.pcd_listener import PointcloudListener
@@ -27,15 +39,10 @@ from omni.isaac.core.utils.prims import get_prim_at_path, is_prim_path_valid
 from omni.isaac.core.materials.physics_material import PhysicsMaterial
 
 from skrl.utils import omniverse_isaacgym_utils
-from pxr import Usd, UsdGeom, Gf, UsdPhysics, Semantics # pxr usd imports used to create cube
-
-from typing import Optional, Tuple
 
 import open3d as o3d
-import pytorch3d
 from pytorch3d.transforms import quaternion_to_matrix
 
-import copy
 # post_physics_step calls
 # - get_observations()
 # - get_states()
@@ -57,13 +64,8 @@ class PCDMovingObjectSingleTask(RLTask):
         self.dt = 1 / 120.0
         self._env = env
         
-        self.initial_target_goal_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
+        self.initial_object_goal_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
         
-        self.alpha = 0.15
-        self.beta = 0.5
-        self.gamma = 0
-        self.zeta = 0.1
-        self.eta = 0.25
         self.relu = torch.nn.ReLU()
 
         self.stage = omni.usd.get_context().get_stage()
@@ -73,23 +75,29 @@ class PCDMovingObjectSingleTask(RLTask):
         self.tool_rot_z = 0     # 0 degree
         self.tool_rot_y = -1.5707 # -90 degree
 
-        self.target_height = 0.05
-
         # workspace 2D boundary
-        # self.x_min = 0.45
-        # self.x_max = 1.2
-        # self.y_min = -0.8
-        # self.y_max = 0.4
-        self.x_min = 0.2
-        self.x_max = 1.2
+        self.x_min = 0.3
+        self.x_max = 0.9
         self.y_min = -0.7
         self.y_max = 0.7
         self.z_min = 0.1
         self.z_max = 0.7
 
         self._pcd_sampling_num = self._task_cfg["sim"]["point_cloud_samples"]
-        self._num_pcd_masks = 2 # tool and target
-        # TODO: point cloud의 sub mask 개수를 state 또는 config에서 받아올 것.
+        # observation and action space
+        pcd_observations = self._pcd_sampling_num * 2 * 3
+        # 2 is a number of point cloud masks(tool and object) and 3 is a cartesian coordinate
+        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 2
+        '''
+        refer to observations in get_observations()
+        pcd_observations                              # [NE, 3*2*pcd_sampling_num]
+        dof_pos_scaled,                               # [NE, 6]
+        dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
+        flange_pos,                                   # [NE, 3]
+        flange_rot,                                   # [NE, 4]
+        goal_pos_xy,                                  # [NE, 2]
+        
+        '''
 
         # get tool point cloud from ply and convert it to torch tensor
         device = torch.device(self.cfg["rl_device"])
@@ -110,20 +118,6 @@ class PCDMovingObjectSingleTask(RLTask):
         self.target_pcd = target_pcd.unsqueeze(0).repeat(self._num_envs, 1, 1)
         self.target_pcd = self.target_pcd.float()
 
-        # observation and action space
-        pcd_observations = self._pcd_sampling_num * self._num_pcd_masks * 3     # 2 is a number of point cloud masks and 3 is a cartesian coordinate
-        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 2
-        '''
-        refer to observations in get_observations()
-        pcd_observations                              # [NE, 3*2*pcd_sampling_num]
-        dof_pos_scaled,                               # [NE, 6]
-        dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
-        flange_pos,                                   # [NE, 3]
-        flange_rot,                                   # [NE, 4]
-        goal_pos_xy,                                  # [NE, 2]
-        
-        '''
-
         if self._control_space == "joint":
             self._num_actions = 6
         elif self._control_space == "cartesian":
@@ -132,9 +126,37 @@ class PCDMovingObjectSingleTask(RLTask):
             raise ValueError("Invalid control space: {}".format(self._control_space))
 
         self._flange_link = "tool0"
-        
+
+        # Solving I.K. with cuRobo
+        self.init_cuRobo()        
         
         RLTask.__init__(self, name, env)
+
+
+    def init_cuRobo(self):
+        # Solving I.K. with cuRobo
+        tensor_args = TensorDeviceType()
+        robot_config_file = load_yaml(join_path(get_robot_configs_path(), "ur5e.yml"))
+        robot_config = robot_config_file["robot_cfg"]
+        collision_file = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/collision_bar.yml"
+        
+        world_cfg = WorldConfig.from_dict(load_yaml(collision_file))
+
+        ik_config = IKSolverConfig.load_from_robot_config(
+            robot_config,
+            world_cfg,
+            rotation_threshold=0.05,
+            position_threshold=0.005,
+            num_seeds=20,
+            self_collision_check=True,
+            self_collision_opt=True,
+            tensor_args=tensor_args,
+            use_cuda_graph=True,
+            ee_link_name="tool0",
+        )
+        self.ik_solver = IKSolver(ik_config)
+
+
 
     def update_config(self, sim_config):
         self._sim_config = sim_config
@@ -156,7 +178,6 @@ class PCDMovingObjectSingleTask(RLTask):
         self._goal_mark = self._task_cfg["env"]["goal"]
         self._target_position = self._task_cfg["env"]["object"]
         self._pcd_normalization = self._task_cfg["sim"]["point_cloud_normalization"]
-
 
         
     def set_up_scene(self, scene) -> None:
@@ -201,7 +222,7 @@ class PCDMovingObjectSingleTask(RLTask):
         target = DynamicCylinder(prim_path=self.default_zero_env_path + "/target",
                                  name="target",
                                  radius=0.04,
-                                 height=self.target_height,
+                                 height=0.05,
                                  density=1,
                                  color=torch.tensor([255, 0, 0]),
                                  mass=1,
@@ -363,6 +384,13 @@ class PCDMovingObjectSingleTask(RLTask):
         self.robot_dof_targets[:, 7] = torch.tensor(self.tool_rot_x, device=self._device)
         self.robot_dof_targets[:, 8] = torch.tensor(self.tool_rot_z, device=self._device)
         self.robot_dof_targets[:, 9] = torch.tensor(self.tool_rot_y, device=self._device)
+
+        # # Diagnostic print statements to check targets and velocities
+        # print(f"Actions: {self.actions}")
+        # print(f"Targets: {targets}")
+        # print(f"Clamped Targets: {self.robot_dof_targets[:, :6]}")
+
+
         self._robots.set_joint_position_targets(self.robot_dof_targets, indices=env_ids_int32)
 
     def reset_idx(self, env_ids) -> None:
@@ -422,9 +450,9 @@ class PCDMovingObjectSingleTask(RLTask):
     def calculate_metrics(self) -> None:
         initialized_idx = self.progress_buf == 1
         self.current_target_goal_distance = LA.norm(self.goal_pos_xy - self.target_pos_xy, ord=2, dim=1)
-        self.initial_target_goal_distance[initialized_idx] = self.current_target_goal_distance[initialized_idx]
+        self.initial_object_goal_distance[initialized_idx] = self.current_target_goal_distance[initialized_idx]
 
-        init_t_g_d = self.initial_target_goal_distance
+        init_t_g_d = self.initial_object_goal_distance
         cur_t_g_d = self.current_target_goal_distance
         target_goal_distance_reward = self.relu(-(cur_t_g_d - init_t_g_d)/init_t_g_d)
 

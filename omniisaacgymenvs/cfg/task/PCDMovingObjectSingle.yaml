@@ -7,7 +7,7 @@ physics_engine: ${..physics_engine}
 env:
   # numEnvs: ${resolve_default:4096,${...num_envs}}
   # numEnvs: ${resolve_default:2048,${...num_envs}}
-  numEnvs: ${resolve_default:1,${...num_envs}}
+  numEnvs: ${resolve_default:4,${...num_envs}}
   envSpacing: 2.0
   episodeLength: 300
   # episodeLength: 100
@@ -16,8 +16,8 @@ env:
   clipObservations: 5.0
   clipActions: 1.0
 
-  # controlFrequencyInv: 2 # 60 Hz, default setting
-  controlFrequencyInv: 1
+  controlFrequencyInv: 2 # 60 Hz, default setting
+  # controlFrequencyInv: 1
 
   startPositionNoise: 0.0
   startRotationNoise: 0.0
