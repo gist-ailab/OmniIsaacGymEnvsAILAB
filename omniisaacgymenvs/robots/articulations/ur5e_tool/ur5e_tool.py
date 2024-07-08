@@ -12,6 +12,7 @@ import os, sys
 import math
 import numpy as np
 import torch
+import carb
 
 from omni.isaac.core.robots.robot import Robot
 from omni.isaac.core.utils.nucleus import get_assets_root_path
