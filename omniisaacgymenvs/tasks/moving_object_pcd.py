@@ -61,7 +61,7 @@ class PCDMovingObjectTask(RLTask):
 
         self.robot_list = ['ur5e_tool', 'ur5e_fork', 'ur5e_knife', 'ur5e_ladle', 'ur5e_spatular', 'ur5e_spoon']
         # self.robot_list = ['ur5e_tool']
-        self.robot_num = len(self.robot_list)        
+        self.robot_num = len(self.robot_list)
         self.initial_object_goal_distance = torch.empty(self._num_envs).to(self.cfg["rl_device"])
         self.completion_reward = torch.zeros(self._num_envs).to(self.cfg["rl_device"])
         
@@ -122,7 +122,6 @@ class PCDMovingObjectTask(RLTask):
 
         # Solving I.K. with cuRobo
         self.init_cuRobo()
-        
 
         RLTask.__init__(self, name, env)
 
@@ -184,8 +183,8 @@ class PCDMovingObjectTask(RLTask):
         super().set_up_scene(scene)
         # self._rl_task_setup_scene(scene)
 
-        default_translations=torch.tensor([0.0, 0.0, 10.0]).repeat(self._num_envs,1)
-        visibilities = torch.tensor([False]).repeat(self._num_envs)
+        default_translations=torch.tensor([0.0, 0.0, 0.0]).repeat(self._num_envs,1)
+        visibilities = torch.tensor([True]).repeat(self._num_envs)
         
         for name in self.robot_list:
             # Create an instance variable for each name in robot_list
@@ -248,9 +247,21 @@ class PCDMovingObjectTask(RLTask):
 
         for idx, sub_envs in enumerate(self.separated_envs):
             robot_name = self.robot_list[idx]
-            pos = torch.tensor([0.0, 0.0, 0.0], device=self._device).repeat(len(sub_envs),1)
-            env_pos = self._env_pos[sub_envs]
-            getattr(self, f"_{robot_name}").set_world_poses(pos+env_pos, indices=sub_envs)
+
+            # Set positions for visible robots
+            visible_pos = torch.tensor([0.0, 0.0, 0.0], device=self._device).repeat(len(sub_envs), 1)
+            visible_env_pos = self._env_pos[sub_envs]
+            # Set positions for invisible robots
+            invisible_pos = torch.tensor([0.0, 0.0, 10.0], device=self._device).repeat(self._num_envs - len(sub_envs), 1)
+            invisible_env_pos = self._env_pos[~torch.isin(torch.arange(self._num_envs, device=self._device), sub_envs)]
+            
+            # Combine positions
+            all_positions = torch.zeros((self._num_envs, 3), device=self._device)
+            all_positions[sub_envs] = visible_pos + visible_env_pos
+            all_positions[~torch.isin(torch.arange(self._num_envs, device=self._device), sub_envs)] = invisible_pos + invisible_env_pos
+            
+            # Set world poses for robots, flanges, and tools
+            getattr(self, f"_{robot_name}").set_world_poses(all_positions)
 
             # Set visibilities for the current subset of environments
             visibilities = torch.zeros(self._num_envs, dtype=torch.bool, device=self._device)
