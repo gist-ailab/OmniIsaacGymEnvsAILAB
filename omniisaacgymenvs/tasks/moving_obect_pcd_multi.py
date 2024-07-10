@@ -1,10 +1,7 @@
 import torch
 from torch import linalg as LA
 import numpy as np
-import cv2
-from gym import spaces
 from copy import deepcopy
-from collections import OrderedDict
  
 from omni.isaac.core.utils.extensions import enable_extension
 enable_extension("omni.replicator.isaac")   # required for PytorchListener
@@ -23,24 +20,18 @@ torch.backends.cudnn.allow_tf32 = True
 # enable_extension("omni.kit.window.viewport")  # enable legacy viewport interface
 import omni.replicator.core as rep
 from omniisaacgymenvs.tasks.base.rl_task import RLTask
-from omniisaacgymenvs.robots.articulations.ur5e_tool.ur5e_tool import UR5eTool
 from omniisaacgymenvs.robots.articulations.views.ur5e_view import UR5eView
 from omniisaacgymenvs.tasks.utils.get_toolmani_assets import get_robot, get_object, get_goal
 from omniisaacgymenvs.tasks.utils.pcd_processing import get_pcd, pcd_registration
 from omniisaacgymenvs.tasks.utils.pcd_writer import PointcloudWriter
 from omniisaacgymenvs.tasks.utils.pcd_listener import PointcloudListener
-from omni.isaac.core.utils.semantics import add_update_semantics
 
 from omni.isaac.core.prims import RigidPrimView
+from omni.isaac.core.utils.types import ArticulationActions
 
 from skrl.utils import omniverse_isaacgym_utils
 
-from typing import Optional, Tuple
-
-import open3d as o3d
-from pytorch3d.transforms import quaternion_to_matrix
-
-import copy
+from pytorch3d.transforms import quaternion_to_matrix,axis_angle_to_quaternion, quaternion_multiply
 
 # post_physics_step calls
 # - get_observations()
@@ -64,7 +55,9 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.dt = 1 / 120.0
         self._env = env
 
-        self.robot_list = ['ur5e_tool', 'ur5e_fork', 'ur5e_knife', 'ur5e_ladle', 'ur5e_spatular', 'ur5e_spoon']        
+        self.robot_list = ['ur5e_tool', 'ur5e_fork', 'ur5e_knife', 'ur5e_ladle', 'ur5e_spatular', 'ur5e_spoon']
+        # self.robot_list = ['ur5e_tool']
+        self.robot_num = len(self.robot_list)
         self.initial_object_goal_distance = torch.empty(self._num_envs*len(self.robot_list)).to(self.cfg["rl_device"])
         self.completion_reward = torch.zeros(self._num_envs*len(self.robot_list)).to(self.cfg["rl_device"])
         
@@ -85,7 +78,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         
         self._pcd_sampling_num = self._task_cfg["sim"]["point_cloud_samples"]
         # observation and action space
-        pcd_observations = self._pcd_sampling_num * 2 * 3
+        pcd_observations = self._pcd_sampling_num * 2 * 3   # TODO: 환경 개수 * 로봇 대수 인데 이게 맞는지 확인 필요
         # 2 is a number of point cloud masks(tool and object) and 3 is a cartesian coordinate
         self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 2
         '''
@@ -154,7 +147,7 @@ class PCDMovingObjectTaskMulti(RLTask):
             self_collision_opt=True,
             tensor_args=tensor_args,
             use_cuda_graph=True,
-            ee_link_name="flange",
+            ee_link_name="tool0",
         )
         self.ik_solver = IKSolver(ik_config)
 
@@ -166,6 +159,7 @@ class PCDMovingObjectTaskMulti(RLTask):
 
         self._num_envs = self._task_cfg["env"]["numEnvs"]
         self._env_spacing = self._task_cfg["env"]["envSpacing"]
+        self._sub_spacing = self._task_cfg["env"]["subSpacing"]
 
         self._max_episode_length = self._task_cfg["env"]["episodeLength"]
 
@@ -182,38 +176,32 @@ class PCDMovingObjectTaskMulti(RLTask):
 
 
     def set_up_scene(self, scene) -> None:
-        # self.get_robot()
-        # self.get_object()
-        # self.get_cube()
-        # self.get_goal()
-        # self.get_lidar(idx=0, scene=scene)
-
         for idx, name in enumerate(self.robot_list):
+            # Make the suv-environments into a grid
+            x = idx // 2
+            y = idx % 2
             get_robot(name, self._sim_config, self.default_zero_env_path,
-                      translation=torch.tensor([idx*2, 0.0, 0.0]))
+                      translation=torch.tensor([x * self._sub_spacing, y * self._sub_spacing, 0.0]))
             get_object(name+'_object', self._sim_config, self.default_zero_env_path)
             get_goal(name+'_goal',self._sim_config, self.default_zero_env_path)
         self.robot_num = len(self.robot_list)
-      
 
-        # RLTask.set_up_scene(self, scene)
         super().set_up_scene(scene)
-        # self._rl_task_setup_scene(scene)
 
-        # self.exp_dict = {}
         for idx, name in enumerate(self.robot_list):
             self.exp_dict[name]['robot_view'] = UR5eView(prim_paths_expr=f"/World/envs/.*/{name}", name=f"{name}_view")
             self.exp_dict[name]['object_view'] = RigidPrimView(prim_paths_expr=f"/World/envs/.*/{name}_object", name=f"{name}_object_view", reset_xform_properties=False)
             self.exp_dict[name]['goal_view'] = RigidPrimView(prim_paths_expr=f"/World/envs/.*/{name}_goal", name=f"{name}_goal_view", reset_xform_properties=False)
-            self.exp_dict[name]['offset'] = torch.tensor([idx*2, 0.0, 0.0], device=self._device).repeat(self.num_envs, 1)
-            # self.exp_dict[name]['reset_env_ids'] = torch.arange(self.num_envs, device=self._device)
-            # self.exp_dict[name] = {
-            #     'robot_view': UR5eView(prim_paths_expr=f"/World/envs/.*/{name}", name=f"{name}_view"),
-            #     'object_view': RigidPrimView(prim_paths_expr=f"/World/envs/.*/{name}_object", name=f"{name}_object_view", reset_xform_properties=False),
-            #     'goal_view': RigidPrimView(prim_paths_expr=f"/World/envs/.*/{name}_goal", name=f"{name}_goal_view", reset_xform_properties=False),
-            #     'offset': torch.tensor([idx*2, 0.0, 0.0], device=self._device).repeat(self.num_envs, 1),
-            #     'reset_env_ids': torch.arange(self.num_envs, device=self._device),
-            # }
+            
+            # offset is only need for the object and goal
+            # TODO: offset은 reset_idx에서 써야하지 않을까?
+            x = idx // 2
+            y = idx % 2
+            self.exp_dict[name]['offset'] = torch.tensor([x * self._sub_spacing,
+                                                          y* self._sub_spacing,
+                                                          0.0],
+                                                          device=self._device).repeat(self.num_envs, 1)
+
             self.exp_dict[name]['goal_view']._non_root_link = True   # do not set states for kinematics
             scene.add(self.exp_dict[name]['robot_view'])
             scene.add(self.exp_dict[name]['robot_view']._flanges)
@@ -221,42 +209,9 @@ class PCDMovingObjectTaskMulti(RLTask):
 
             scene.add(self.exp_dict[name]['object_view'])
             scene.add(self.exp_dict[name]['goal_view'])
+        self.ref_robot = self.exp_dict[name]['robot_view']
 
-        
         self.init_data()
-
-    # region initialize_views 사용 안 하는 거 같은데 다른 예제들에 있음... 일단 주석 처리
-    # def initialize_views(self, scene):
-    #     super().initialize_views(scene)
-    #     if scene.object_exist("robot_view"):
-    #         scene.remove("robot_view", registry_only=True)
-    #     if scene.object_exist("end_effector_view"):
-    #         scene.remove("end_effector_view", registry_only=True)
-    #     if scene.object_exist("tool_view"):
-    #         scene.remove("tool_view", registry_only=True)
-    #     if scene.object_exist("object_view"):
-    #         scene.remove("object_view", registry_only=True)
-    #     if scene.object_exist("goal_view"):
-    #         scene.remove("goal_view", registry_only=True)
-        
-    #     # robots view
-    #     self._ur5e_tools = UR5eView(prim_paths_expr="/World/envs/.*/_ur5e_tools", name="_ur5e_tools_view")
-    #     # self._flanges = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/{self._flange_link}", name="end_effector_view")
-    #     # self._tools = RigidPrimView(prim_paths_expr=f"/World/envs/.*/robot/tool", name="tool_view")
-    #     self._objects = RigidPrimView(prim_paths_expr="/World/envs/.*/object", name="object_view", reset_xform_properties=False)
-    #     # self._cubes = RigidPrimView(prim_paths_expr="/World/envs/.*/cube", name="cube_view", reset_xform_properties=True)
-    #     self._goals = RigidPrimView(prim_paths_expr="/World/envs/.*/goal", name="goal_view", reset_xform_properties=False)
-
-    #     scene.add(self._ur5e_tools)
-    #     # scene.add(self._flanges)
-    #     # scene.add(self._tools)
-    #     scene.add(self._ur5e_tools._flanges)
-    #     scene.add(self._ur5e_tools._tools)
-    #     scene.add(self._objects)
-    #     scene.add(self._goals)
-        
-    #     self.init_data()
-    # endregion
         
 
     def init_data(self) -> None:
@@ -272,22 +227,24 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.flange_pos = torch.zeros((self._num_envs*self.robot_num, 3), device=self._device)
         self.flange_rot = torch.zeros((self._num_envs*self.robot_num, 4), device=self._device)
 
+        self.empty_separated_envs = [torch.empty(0, dtype=torch.int32, device=self._device) for _ in self.robot_list]
+        self.total_env_ids = torch.arange(self._num_envs*self.robot_num, dtype=torch.int32, device=self._device)
+
     # change from RLTask.cleanup()
     def cleanup(self) -> None:
         """Prepares torch buffers for RL data collection."""
 
         # prepare tensors
-        self.obs_buf = torch.zeros((self._num_envs*len(self.robot_list), self.num_observations), device=self._device, dtype=torch.float)
-        self.states_buf = torch.zeros((self._num_envs*len(self.robot_list), self.num_states), device=self._device, dtype=torch.float)
-        self.rew_buf = torch.zeros(self._num_envs*len(self.robot_list), device=self._device, dtype=torch.float)
-        self.reset_buf = torch.ones(self._num_envs*len(self.robot_list), device=self._device, dtype=torch.long)
-        self.progress_buf = torch.zeros(self._num_envs*len(self.robot_list), device=self._device, dtype=torch.long)
+        self.obs_buf = torch.zeros((self._num_envs*self.robot_num, self.num_observations), device=self._device, dtype=torch.float)
+        self.states_buf = torch.zeros((self._num_envs*self.robot_num, self.num_states), device=self._device, dtype=torch.float)
+        self.rew_buf = torch.zeros(self._num_envs*self.robot_num, device=self._device, dtype=torch.float)
+        self.reset_buf = torch.ones(self._num_envs*self.robot_num, device=self._device, dtype=torch.long)
+        self.progress_buf = torch.zeros(self._num_envs*self.robot_num, device=self._device, dtype=torch.long)
         self.extras = {}
 
 
     def post_reset(self):
         self.num_robot_dofs = self.exp_dict['ur5e_fork']['robot_view'].num_dof
-        self.robot_dof_pos = torch.zeros((self.num_envs*self.robot_num, self.num_robot_dofs), device=self._device)
         
         dof_limits = self.exp_dict['ur5e_fork']['robot_view'].get_dof_limits()  # every robot has the same dof limits
         # dof_limits = dof_limits.repeat(self.robot_num, 1, 1)
@@ -295,7 +252,9 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.robot_dof_lower_limits = dof_limits[0, :, 0].to(device=self._device)
         self.robot_dof_upper_limits = dof_limits[0, :, 1].to(device=self._device)
         self.robot_dof_speed_scales = torch.ones_like(self.robot_dof_lower_limits)
-        self.robot_dof_targets = torch.zeros((self._num_envs*self.robot_num, self.num_robot_dofs), dtype=torch.float, device=self._device)
+        # self.robot_dof_targets = torch.zeros((self._num_envs*self.robot_num, self.num_robot_dofs), dtype=torch.float, device=self._device)
+        self.robot_dof_targets = self.robot_default_dof_pos.unsqueeze(0).repeat(self.num_envs*self.robot_num, 1)
+        self.zero_joint_velocities = torch.zeros((self._num_envs*self.robot_num, self.num_robot_dofs), dtype=torch.float, device=self._device)
         
         for name in self.robot_list:
             self.exp_dict[name]['object_view'].enable_rigid_body_physics()
@@ -311,10 +270,10 @@ class PCDMovingObjectTaskMulti(RLTask):
             self.reset_idx(reset_env_ids)
 
         if self.step_num == 0:
-            pass
+            pass    # At the very first step, action dimension is [num_envs, 7]. but it should be [num_envs*robot_num, 7]
         else:
             self.actions = actions.clone().to(self._device)
-        env_ids_int32 = torch.arange(self.exp_dict['ur5e_fork']['robot_view'].count,
+        env_ids_int32 = torch.arange(self.ref_robot.count,
                                      dtype=torch.int32,
                                      device=self._device)
 
@@ -324,9 +283,9 @@ class PCDMovingObjectTaskMulti(RLTask):
         elif self._control_space == "cartesian":
             goal_position = self.flange_pos + self.actions[:, :3] / 70.0
             goal_orientation = self.flange_rot + self.actions[:, 3:] / 70.0
-            flange_link_idx = self.exp_dict['ur5e_fork']['robot_view'].body_names.index(self._flange_link)
+            flange_link_idx = self.ref_robot.body_names.index(self._flange_link)
             delta_dof_pos = omniverse_isaacgym_utils.ik(
-                                                        jacobian_end_effector=self.jacobians[:, flange_link_idx, :, :6],
+                                                        jacobian_end_effector=self.jacobians[:, flange_link_idx-1, :, :6],
                                                         current_position=self.flange_pos,
                                                         current_orientation=self.flange_rot,
                                                         goal_position=goal_position,
@@ -334,7 +293,7 @@ class PCDMovingObjectTaskMulti(RLTask):
                                                         )
             '''jacobian : (self._num_envs, num_of_bodies-1, wrench, num of joints)
             num_of_bodies - 1 due to start from 0 index
-            s'''
+            '''
             dof_targets = self.robot_dof_targets[:, :6] + delta_dof_pos[:, :6]
 
         self.robot_dof_targets[:, :6] = torch.clamp(dof_targets, self.robot_dof_lower_limits[:6], self.robot_dof_upper_limits[:6])
@@ -344,12 +303,37 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.robot_dof_targets[:, 9] = torch.deg2rad(torch.tensor(self.tool_rot_y, device=self._device))
         ### TODO: 나중에는 윗 줄을 통해 tool position이 random position으로 고정되도록 변수화. reset_idx도 확인할 것
 
-        # self._robots.get_joint_positions()
-        # self._robots.set_joint_positions(self.robot_dof_targets, indices=env_ids_int32)
-        for idx, name in enumerate(self.robot_list):
-            self.exp_dict[name]['robot_view'].set_joint_positions(self.robot_dof_targets[idx*self.num_envs:(idx+1)*self.num_envs], indices=env_ids_int32)
-            self.exp_dict[name]['object_view'].enable_rigid_body_physics(indices=env_ids_int32)
-            self.exp_dict[name]['object_view'].enable_gravities(indices=env_ids_int32)
+        indices = torch.tensor([0, 6, 12], dtype=torch.int32, device=self._device)
+
+        for name in self.robot_list:
+            '''
+            Caution:
+             DO NOT USE set_joint_positions at pre_physics_step !!!!!!!!!!!!!!
+             set_joint_positions: This method will immediately set (teleport) the affected joints to the indicated value.
+                                  It make the robot unstable.
+             set_joint_position_targets: Set the joint position targets for the implicit Proportional-Derivative (PD) controllers
+             apply_action: apply multiple targets (position, velocity, and/or effort) in the same call
+             (effort control means force/torque control)
+            '''
+            robot_env_ids = env_ids_int32 * self.robot_num + self.robot_list.index(name)
+            robot_dof_targets = self.robot_dof_targets[robot_env_ids]
+            articulation_actions = ArticulationActions(joint_positions=robot_dof_targets)
+            self.exp_dict[name]['robot_view'].apply_action(articulation_actions, indices=env_ids_int32)
+            # apply_action의 환경 indices에 env_ids외의 index를 넣으면 GPU오류가 발생한다. 그래서 env_ids를 넣어야 한다.
+
+
+    def separate_env_ids(self, env_ids):
+        # Calculate the local index for each env_id
+        local_indices = env_ids // self.robot_num
+        # Calculate indices for each env_id based on its original value
+        robot_indices = env_ids % self.robot_num
+        # Create a mask for each robot
+        masks = torch.stack([robot_indices == i for i in range(self.robot_num)], dim=1)
+        # Apply the masks to separate the env_ids
+        separated_envs = [local_indices[mask] for mask in masks.unbind(dim=1)]
+        
+        return separated_envs
+    
 
     def reset_idx(self, env_ids) -> None:
         """
@@ -367,79 +351,79 @@ class PCDMovingObjectTaskMulti(RLTask):
         """
         env_ids = env_ids.to(dtype=torch.int32)
 
-        # Calculate the division by self.num_envs to find where the value crosses multiples of self.num_envs
-        divisions = env_ids // 4
+        # Split env_ids using the split_env_ids function
+        separated_envs = self.separate_env_ids(env_ids)
 
-        # Find the indices where the division changes (i.e., where we cross a multiple of 4)
-        change_indices = torch.where(divisions[:-1] != divisions[1:])[0] + 1
-        change_indices_list = change_indices.tolist()
+        for idx, sub_envs in enumerate(separated_envs):
+            if sub_envs.size(0) == 0:
+                continue
 
-        # Compute split sizes from change_indices
-        split_sizes = [change_indices_list[0]] + [change_indices_list[i] - change_indices_list[i-1] for i in range(1, len(change_indices_list))]
-
-        # Add the size of the final split
-        split_sizes.append(len(env_ids) - change_indices_list[-1])
-
-        # Split the tensor using the computed sizes
-        sub_env_ids = torch.split(env_ids, split_sizes)
-
-
-        for idx, name in enumerate(self.robot_list):
-
-            world_env_ids = env_ids[idx*self.num_envs:(idx+1)*self.num_envs]
-            robot_env_ids = torch.arange(self.num_envs, dtype=torch.int32, device=self._device)
-
-            robot_dof_targets = self.robot_dof_targets[(idx)*self.num_envs:(idx+1)*self.num_envs, :]
+            robot_name = self.robot_list[idx]
+            robot_dof_targets = self.robot_dof_targets[sub_envs, :]
 
             # reset object
-            object_position = torch.tensor(self._object_position, device=self._device)
-            object_pos = object_position.repeat(len(robot_env_ids), 1)
-            orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)
-            object_ori = orientation.repeat(len(robot_env_ids),1)
-            self.exp_dict[name]['object_view'].set_world_poses(object_pos + self.exp_dict[name]['offset'] + self._env_pos[robot_env_ids],
-                                                               object_ori,
-                                                               indices=robot_env_ids)
-            
-            goal_mark_pos = torch.tensor(self._goal_mark, device=self._device)
-            goal_mark_pos = goal_mark_pos.repeat(len(robot_env_ids),1)
-            self.exp_dict[name]['goal_view'].set_world_poses(goal_mark_pos + self.exp_dict[name]['offset'] + self._env_pos[robot_env_ids],
-                                                             indices=robot_env_ids)
-            
-            # reset robot
-            # reset to default pose            
-            # self.exp_dict[name]['robot_view'].set_joint_positions(self.robot_default_dof_pos.unsqueeze(0).repeat(len(env_ids)), indices=env_ids)
-            
-            # move to start position near the object
-            # TODO: start position을 random position으로 고정되도록 변수화. orientation이 물체를 바라보도록 설정
-            ee_pos = deepcopy(object_pos)
-            ee_pos[:, 0] -= 0.2    # x
-            ee_pos[:, 1] -= 0.2     # y
-            ee_pos[:, 2] = 0.35     # z
+            object_position = torch.tensor(self._object_position, device=self._device)  # objects' local pos
+            object_pos = object_position.repeat(len(sub_envs), 1)
+            orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)   # objects' local orientation
+            object_ori = orientation.repeat(len(sub_envs),1)
+            obj_world_pos = object_pos + self.exp_dict[robot_name]['offset'][sub_envs, :] + self._env_pos[sub_envs, :]  # objects' world pos
+            self.exp_dict[robot_name]['object_view'].set_world_poses(obj_world_pos,
+                                                                     object_ori,
+                                                                     indices=sub_envs)
 
-            ee_ori = torch.tensor([0.579, -0.579, -0.406, 0.406], device=self._device)
-            ee_ori = ee_ori.repeat(len(robot_env_ids),1)
+            # reset goal
+            goal_mark_pos = torch.tensor(self._goal_mark, device=self._device)  # goals' local pos
+            goal_mark_pos = goal_mark_pos.repeat(len(sub_envs),1)
+            goal_mark_ori = orientation.repeat(len(sub_envs),1)
+            goals_world_pos = goal_mark_pos + self.exp_dict[robot_name]['offset'][sub_envs, :] + self._env_pos[sub_envs, :]
+            self.exp_dict[robot_name]['goal_view'].set_world_poses(goals_world_pos,
+                                                                   goal_mark_ori,
+                                                                   indices=sub_envs)
 
-            initialized_pos = Pose(ee_pos, ee_ori, name="tool0")
-            
+            flange_pos = deepcopy(object_pos)
+            flange_pos[:, 0] -= 0.2     # x
+            flange_pos[:, 1] -= 0.3     # y
+            flange_pos[:, 2] = 0.4      # z
+
+            # Extract the x and y coordinates
+            flange_xy = flange_pos[:, :2]
+            object_xy = object_pos[:, :2]
+
+            direction = object_xy - flange_xy                       # Calculate the vector from flange to object
+            angle = torch.atan2(direction[:, 1], direction[:, 0])   # Calculate the angle of the vector relative to the x-axis
+            axis_angle_z = torch.zeros_like(flange_pos)             # Create axis-angle representation for rotation about z-axis
+            axis_angle_z[:, 2] = -angle                             # Negative angle to point towards the object
+            quat_z = axis_angle_to_quaternion(axis_angle_z)         # Convert to quaternion
+
+            # Create axis-angle representation for 180-degree rotation about y-axis
+            axis_angle_y = torch.tensor([0., torch.pi, 0.], device=flange_pos.device).expand_as(flange_pos)
+
+            quat_y = axis_angle_to_quaternion(axis_angle_y)     # Convert to quaternion
+            flange_ori = quaternion_multiply(quat_y, quat_z)    # Combine the rotations (first rotate around z, then around y)
+
+            initialized_pos = Pose(flange_pos, flange_ori, name="tool0")
             target_dof_pos = torch.empty(0).to(device=self._device)
-            for i in range(initialized_pos.batch):
+
+            for i in range(initialized_pos.batch):  # solve IK with cuRobo
                 result = self.ik_solver.solve_single(initialized_pos[i])
-                #IK를 못 풀었을 때를 대비하여 result.success로 체크하고 false인 경우에는 기본 값으로 설정
                 if result.success:
                     target_dof_pos = torch.cat((target_dof_pos, result.solution[result.success]), dim=0)
                 else:
-                    print(f"IK solver failed. Initialize a robot in {name} env {robot_env_ids[i]} with default pose.")
+                    print(f"IK solver failed. Initialize a robot in {robot_name} env {sub_envs[i]} with default pose.")
                     target_dof_pos = torch.cat((target_dof_pos, self.robot_default_dof_pos[:6].unsqueeze(0)), dim=0)
+            
             robot_dof_targets[:, :6] = torch.clamp(target_dof_pos,
-                                                    self.robot_dof_lower_limits[:6].repeat(len(robot_env_ids),1),
-                                                    self.robot_dof_upper_limits[:6].repeat(len(robot_env_ids),1))
-            self.exp_dict[name]['robot_view'].set_joint_positions(robot_dof_targets, indices=robot_env_ids)
-            self.exp_dict[name]['robot_view'].set_joint_position_targets(robot_dof_targets, indices=robot_env_ids)
-            self.exp_dict[name]['robot_view'].set_joint_velocities(torch.zeros((len(robot_env_ids), self.num_robot_dofs), device=self._device), indices=robot_env_ids)
-
+                                                   self.robot_dof_lower_limits[:6].repeat(len(sub_envs),1),
+                                                   self.robot_dof_upper_limits[:6].repeat(len(sub_envs),1))
+            self.exp_dict[robot_name]['robot_view'].set_joint_positions(robot_dof_targets, indices=sub_envs)
+            self.exp_dict[robot_name]['robot_view'].set_joint_position_targets(robot_dof_targets, indices=sub_envs)
+            self.exp_dict[robot_name]['robot_view'].set_joint_velocities(torch.zeros((len(sub_envs), self.num_robot_dofs), device=self._device),
+                                                                   indices=sub_envs)
+            
             # bookkeeping
-            self.reset_buf[sub_env_ids[idx]] = 0
-            self.progress_buf[sub_env_ids[idx]] = 0
+            separated_abs_env = separated_envs[idx]*self.robot_num + idx
+            self.reset_buf[separated_abs_env] = 0
+            self.progress_buf[separated_abs_env] = 0
 
 
     def get_observations(self) -> dict:
@@ -572,17 +556,17 @@ class PCDMovingObjectTaskMulti(RLTask):
         ones = torch.ones_like(self.reset_buf)
         reset = torch.zeros_like(self.reset_buf)
 
-        # # workspace regularization
-        reset = torch.where(self.flange_pos[:, 0] < self.x_min, ones, reset)
-        reset = torch.where(self.flange_pos[:, 1] < self.y_min, ones, reset)
-        reset = torch.where(self.flange_pos[:, 0] > self.x_max, ones, reset)
-        reset = torch.where(self.flange_pos[:, 1] > self.y_max, ones, reset)
-        reset = torch.where(self.flange_pos[:, 2] > 0.5, ones, reset)
-        reset = torch.where(self.object_pos_xy[:, 0] < self.x_min, ones, reset)
-        reset = torch.where(self.object_pos_xy[:, 1] < self.y_min, ones, reset)
-        reset = torch.where(self.object_pos_xy[:, 0] > self.x_max, ones, reset)
-        reset = torch.where(self.object_pos_xy[:, 1] > self.y_max, ones, reset)
-        # reset = torch.where(self.object_pos_xy[:, 2] > 0.5, ones, reset)
+        # # # workspace regularization
+        # reset = torch.where(self.flange_pos[:, 0] < self.x_min, ones, reset)
+        # reset = torch.where(self.flange_pos[:, 1] < self.y_min, ones, reset)
+        # reset = torch.where(self.flange_pos[:, 0] > self.x_max, ones, reset)
+        # reset = torch.where(self.flange_pos[:, 1] > self.y_max, ones, reset)
+        # reset = torch.where(self.flange_pos[:, 2] > 0.5, ones, reset)
+        # reset = torch.where(self.object_pos_xy[:, 0] < self.x_min, ones, reset)
+        # reset = torch.where(self.object_pos_xy[:, 1] < self.y_min, ones, reset)
+        # reset = torch.where(self.object_pos_xy[:, 0] > self.x_max, ones, reset)
+        # reset = torch.where(self.object_pos_xy[:, 1] > self.y_max, ones, reset)
+        # # reset = torch.where(self.object_pos_xy[:, 2] > 0.5, ones, reset)
 
         # object reached
         reset = torch.where(self.done_envs, ones, reset)
