@@ -194,7 +194,6 @@ class PCDMovingObjectTaskMulti(RLTask):
             self.exp_dict[name]['goal_view'] = RigidPrimView(prim_paths_expr=f"/World/envs/.*/{name}_goal", name=f"{name}_goal_view", reset_xform_properties=False)
             
             # offset is only need for the object and goal
-            # TODO: offset은 reset_idx에서 써야하지 않을까?
             x = idx // 2
             y = idx % 2
             self.exp_dict[name]['offset'] = torch.tensor([x * self._sub_spacing,
@@ -202,7 +201,6 @@ class PCDMovingObjectTaskMulti(RLTask):
                                                           0.0],
                                                           device=self._device).repeat(self.num_envs, 1)
 
-            self.exp_dict[name]['goal_view']._non_root_link = True   # do not set states for kinematics
             scene.add(self.exp_dict[name]['robot_view'])
             scene.add(self.exp_dict[name]['robot_view']._flanges)
             scene.add(self.exp_dict[name]['robot_view']._tools)
@@ -229,6 +227,7 @@ class PCDMovingObjectTaskMulti(RLTask):
 
         self.empty_separated_envs = [torch.empty(0, dtype=torch.int32, device=self._device) for _ in self.robot_list]
         self.total_env_ids = torch.arange(self._num_envs*self.robot_num, dtype=torch.int32, device=self._device)
+        self.local_env_ids = torch.arange(self.ref_robot.count, dtype=torch.int32, device=self._device)
 
     # change from RLTask.cleanup()
     def cleanup(self) -> None:
@@ -262,6 +261,11 @@ class PCDMovingObjectTaskMulti(RLTask):
 
         indices = torch.arange(self._num_envs*self.robot_num, dtype=torch.int64, device=self._device)
         self.reset_idx(indices)
+
+        for idx, name in enumerate(self.robot_list):
+            self.exp_dict[name]['object_view'].enable_rigid_body_physics()
+            self.exp_dict[name]['object_view'].enable_gravities()
+            self.exp_dict[name]['goal_view'].disable_rigid_body_physics()
 
 
     def pre_physics_step(self, actions) -> None:
@@ -315,10 +319,10 @@ class PCDMovingObjectTaskMulti(RLTask):
              apply_action: apply multiple targets (position, velocity, and/or effort) in the same call
              (effort control means force/torque control)
             '''
-            robot_env_ids = env_ids_int32 * self.robot_num + self.robot_list.index(name)
+            robot_env_ids = self.local_env_ids * self.robot_num + self.robot_list.index(name)
             robot_dof_targets = self.robot_dof_targets[robot_env_ids]
             articulation_actions = ArticulationActions(joint_positions=robot_dof_targets)
-            self.exp_dict[name]['robot_view'].apply_action(articulation_actions, indices=env_ids_int32)
+            self.exp_dict[name]['robot_view'].apply_action(articulation_actions, indices=self.local_env_ids)
             # apply_action의 환경 indices에 env_ids외의 index를 넣으면 GPU오류가 발생한다. 그래서 env_ids를 넣어야 한다.
 
 
@@ -341,7 +345,6 @@ class PCDMovingObjectTaskMulti(RLTask):
         ----------
         exp_done_info : dict
         {
-            "ur5e_tool": torch.tensor([0, 1, 2, 3], device='cuda:0', dtype=torch.int32),
             "ur5e_spoon": torch.tensor([0 , 2, 3], device='cuda:0', dtype=torch.int32),
             "ur5e_spatular": torch.tensor([1, 2, 3], device='cuda:0', dtype=torch.int32),
             "ur5e_ladle": torch.tensor([3], device='cuda:0', dtype=torch.int32),
@@ -379,6 +382,7 @@ class PCDMovingObjectTaskMulti(RLTask):
             self.exp_dict[robot_name]['goal_view'].set_world_poses(goals_world_pos,
                                                                    goal_mark_ori,
                                                                    indices=sub_envs)
+            # self.exp_dict[robot_name]['goal_view'].disable_rigid_body_physics()
 
             flange_pos = deepcopy(object_pos)
             flange_pos[:, 0] -= 0.2     # x
@@ -436,19 +440,27 @@ class PCDMovingObjectTaskMulti(RLTask):
         tools_pcd_flattened = torch.empty(0).to(device=self._device)
         objects_pcd_flattened = torch.empty(0).to(device=self._device)
         object_pcd_concat = torch.empty(0).to(device=self._device)  # concatenate object point cloud for getting xyz position
-        self.goal_pos = torch.empty(0).to(device=self._device)  # concatenate goal position for getting xy position
-        robots_dof_pos = torch.empty(0).to(device=self._device)
-        robots_dof_vel = torch.empty(0).to(device=self._device)
+        self.goal_pos = torch.empty(self._num_envs*self.robot_num, 3).to(device=self._device)  # save goal position for getting xy position
+        robots_dof_pos = torch.empty(self._num_envs*self.robot_num, 6).to(device=self._device)
+        robots_dof_vel = torch.empty(self._num_envs*self.robot_num, 6).to(device=self._device)
 
-        for idx, name in enumerate(self.robot_list):
-            self.flange_pos[idx*self.num_envs:(idx+1)*self.num_envs], self.flange_rot[idx*self.num_envs:(idx+1)*self.num_envs] = self.exp_dict[name]['robot_view'].get_local_poses()
-            object_pos, object_rot_quaternion = self.exp_dict[name]['object_view'].get_local_poses()
+        for idx, robot_name in enumerate(self.robot_list):
+            local_abs_env_ids = self.local_env_ids*self.robot_num + idx
+            robot_flanges = self.exp_dict[robot_name]['robot_view']._flanges
+            self.flange_pos[local_abs_env_ids], self.flange_rot[local_abs_env_ids] = robot_flanges.get_local_poses()
+            object_pos, object_rot_quaternion = self.exp_dict[robot_name]['object_view'].get_local_poses()
+            
+            # local object pose values are indicate with the environment ids with regard to the robot set
+            x = (idx // 2) * self._sub_spacing
+            y = (idx % 2) * self._sub_spacing
+            object_pos[:, :2] -= torch.tensor([x, y], device=self._device)
+            
             object_rot = quaternion_to_matrix(object_rot_quaternion)
-            tool_pos, tool_rot_quaternion = self.exp_dict[name]['robot_view']._tools.get_local_poses()
+            tool_pos, tool_rot_quaternion = self.exp_dict[robot_name]['robot_view']._tools.get_local_poses()
             tool_rot = quaternion_to_matrix(tool_rot_quaternion)
 
             # concat tool point cloud
-            tool_pcd_transformed = pcd_registration(self.exp_dict[name]['tool_pcd'],
+            tool_pcd_transformed = pcd_registration(self.exp_dict[robot_name]['tool_pcd'],
                                                     tool_pos,
                                                     tool_rot,
                                                     self.num_envs,
@@ -457,7 +469,7 @@ class PCDMovingObjectTaskMulti(RLTask):
             tools_pcd_flattened = torch.cat((tools_pcd_flattened, tool_pcd_flattend), dim=0)
 
             # concat object point cloud
-            object_pcd_transformed = pcd_registration(self.exp_dict[name]['object_pcd'],
+            object_pcd_transformed = pcd_registration(self.exp_dict[robot_name]['object_pcd'],
                                                       object_pos,
                                                       object_rot,
                                                       self.num_envs,
@@ -466,13 +478,11 @@ class PCDMovingObjectTaskMulti(RLTask):
             object_pcd_flattend = object_pcd_transformed.contiguous().view(self._num_envs, -1)
             objects_pcd_flattened = torch.cat((objects_pcd_flattened, object_pcd_flattend), dim=0)
 
-            self.goal_pos = torch.cat((self.goal_pos, self.exp_dict[name]['goal_view'].get_local_poses()[0]), dim=0)
-
-            # TODO: get farthest point from the tool to the goal
+            self.goal_pos[local_abs_env_ids] = self.exp_dict[robot_name]['goal_view'].get_local_poses()[0]
 
             # get robot dof position and velocity from 1st to 6th joint
-            robots_dof_pos = torch.cat((robots_dof_pos, self.exp_dict[name]['robot_view'].get_joint_positions(clone=False)[:, 0:6]), dim=0)
-            robots_dof_vel = torch.cat((robots_dof_vel, self.exp_dict[name]['robot_view'].get_joint_velocities(clone=False)[:, 0:6]), dim=0)
+            robots_dof_pos[local_abs_env_ids] = self.exp_dict[robot_name]['robot_view'].get_joint_positions(clone=False)[:, 0:6]
+            robots_dof_vel[local_abs_env_ids] = self.exp_dict[robot_name]['robot_view'].get_joint_velocities(clone=False)[:, 0:6]
             # rest of the joints are not used for control. They are fixed joints at each episode.
         
         self.object_pos_xyz = torch.mean(object_pcd_concat, dim=1)
@@ -511,11 +521,11 @@ class PCDMovingObjectTaskMulti(RLTask):
                                 #   object_pcd_transformed.reshape([object_pcd_transformed.shape[0], -1]), # [NE, N*3], point cloud
                                 #   tool_pcd_transformed.contiguous().view(self._num_envs, -1),   # [NE, N*3], point cloud
                                 #   object_pcd_transformed.contiguous().view(self._num_envs, -1), # [NE, N*3], point cloud
-                                  tools_pcd_flattened,
-                                  objects_pcd_flattened,
+                                  tools_pcd_flattened,                                          # [NE, N*3], point cloud
+                                  objects_pcd_flattened,                                        # [NE, N*3], point cloud
                                   dof_pos_scaled,                                               # [NE, 6]
                                 #   dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
-                                  dof_vel_scaled[:, :6],                                        # [NE, 6]
+                                  dof_vel_scaled,                                               # [NE, 6]
                                   self.flange_pos,                                              # [NE, 3]
                                   self.flange_rot,                                              # [NE, 4]
                                   self.goal_pos_xy,                                             # [NE, 2]
@@ -556,17 +566,17 @@ class PCDMovingObjectTaskMulti(RLTask):
         ones = torch.ones_like(self.reset_buf)
         reset = torch.zeros_like(self.reset_buf)
 
-        # # # workspace regularization
-        # reset = torch.where(self.flange_pos[:, 0] < self.x_min, ones, reset)
-        # reset = torch.where(self.flange_pos[:, 1] < self.y_min, ones, reset)
-        # reset = torch.where(self.flange_pos[:, 0] > self.x_max, ones, reset)
-        # reset = torch.where(self.flange_pos[:, 1] > self.y_max, ones, reset)
-        # reset = torch.where(self.flange_pos[:, 2] > 0.5, ones, reset)
-        # reset = torch.where(self.object_pos_xy[:, 0] < self.x_min, ones, reset)
-        # reset = torch.where(self.object_pos_xy[:, 1] < self.y_min, ones, reset)
-        # reset = torch.where(self.object_pos_xy[:, 0] > self.x_max, ones, reset)
-        # reset = torch.where(self.object_pos_xy[:, 1] > self.y_max, ones, reset)
-        # # reset = torch.where(self.object_pos_xy[:, 2] > 0.5, ones, reset)
+        # # workspace regularization
+        reset = torch.where(self.flange_pos[:, 0] < self.x_min, ones, reset)
+        reset = torch.where(self.flange_pos[:, 1] < self.y_min, ones, reset)
+        reset = torch.where(self.flange_pos[:, 0] > self.x_max, ones, reset)
+        reset = torch.where(self.flange_pos[:, 1] > self.y_max, ones, reset)
+        reset = torch.where(self.flange_pos[:, 2] > 0.5, ones, reset)
+        reset = torch.where(self.object_pos_xy[:, 0] < self.x_min, ones, reset)
+        reset = torch.where(self.object_pos_xy[:, 1] < self.y_min, ones, reset)
+        reset = torch.where(self.object_pos_xy[:, 0] > self.x_max, ones, reset)
+        reset = torch.where(self.object_pos_xy[:, 1] > self.y_max, ones, reset)
+        # reset = torch.where(self.object_pos_xy[:, 2] > 0.5, ones, reset)
 
         # object reached
         reset = torch.where(self.done_envs, ones, reset)
