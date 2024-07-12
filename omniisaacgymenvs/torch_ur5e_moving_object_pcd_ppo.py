@@ -25,16 +25,19 @@ from omniisaacgymenvs.model.shared import Shared
 seed = 82
 set_seed(seed)  # e.g. `set_seed(42)` for fixed seed
 
-# env = load_omniverse_isaacgym_env(task_name="PCDMovingObject")
-env = load_omniverse_isaacgym_env(task_name="PCDMovingObjectMulti")
-# env.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(env.observation_space.shape[0],3), dtype=np.float32)
+task_name = "PCDMovingObjectMulti"   # "PCDMovingObject", "PCDMovingObjectSingle" or "PCDMovingObjectMulti"
+env = load_omniverse_isaacgym_env(task_name=task_name)
+
 env = wrap_env(env)
-# env2 = wrap_env(env2)
 
 device = env.device
 
 # instantiate a memory as rollout buffer (any memory can be used for this)
-memory = RandomMemory(memory_size=16, num_envs=env.num_envs*env._env.task.robot_num, device=device)
+if "Multi" in task_name:
+    num_envs = env.num_envs*env._env.task.robot_num
+else:
+    num_envs = env.num_envs
+memory = RandomMemory(memory_size=16, num_envs=num_envs, device=device)
 
 # instantiate the agent's models (function approximators).
 # PPO requires 2 models, visit its documentation for more details
@@ -118,7 +121,7 @@ trainer = SequentialTrainer(cfg=cfg_trainer, env=env, agents=agent)
 #     wandb.save('/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/tasks/moving_target_pcd.py')
 
 # start training
-# trainer.train()
+trainer.train()
 
 # if cfg["experiment"]["wandb_kwargs"]["save_code"]:
 #     pth_path = os.path.join(cfg["experiment"]["directory"], cfg["experiment"]["experiment_name"])
@@ -136,10 +139,10 @@ trainer = SequentialTrainer(cfg=cfg_trainer, env=env, agents=agent)
 # # ---------------------------------------------------------
 # # from skrl.utils.huggingface import download_model_from_huggingface
 
-# download the trained agent's checkpoint from Hugging Face Hub and load it
-# path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-FrankaCabinet-PPO", filename="agent.pt")
-path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/PCDMovingTarget/240623_235519_PCD_Moving_Target/checkpoints/best_agent.pt'
-agent.load(path)
+# # download the trained agent's checkpoint from Hugging Face Hub and load it
+# # path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-FrankaCabinet-PPO", filename="agent.pt")
+# path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/PCDMovingTarget/240623_235519_PCD_Moving_Target/checkpoints/best_agent.pt'
+# agent.load(path)
 
-# start evaluation
-trainer.eval()
+# # start evaluation
+# trainer.eval()
