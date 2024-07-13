@@ -56,8 +56,8 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.dt = 1 / 120.0
         self._env = env
 
-        self.robot_list = ['ur5e_tool', 'ur5e_fork', 'ur5e_knife', 'ur5e_ladle', 'ur5e_spatular', 'ur5e_spoon']
-        # self.robot_list = ['ur5e_tool']
+        # self.robot_list = ['ur5e_tool', 'ur5e_fork', 'ur5e_knife', 'ur5e_ladle', 'ur5e_spatular', 'ur5e_spoon']
+        self.robot_list = ['ur5e_spoon']
         self.robot_num = len(self.robot_list)
         self.total_env_num = self._num_envs * self.robot_num
         self.initial_object_goal_distance = torch.empty(self._num_envs*len(self.robot_list)).to(self.cfg["rl_device"])
@@ -84,12 +84,32 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.tool_rot_y = -90 # -90 degree
 
         # workspace 2D boundary
-        self.x_min = 0.3
-        self.x_max = 0.9
-        self.y_min = -0.7
-        self.y_max = 0.7
-        self.z_min = 0.1
-        self.z_max = 0.7
+        self.x_min, self.x_max = (0.2, 0.9)
+        self.y_min, self.y_max = (-0.7, 0.7)
+        self.z_min, self.z_max = (0.5, 0.6)
+
+        # self.x_min, self.x_max = (0.19, 0.91)
+        # self.y_min, self.y_max = (-0.69, 0.71)
+        # self.z_min, self.z_max = (0.49, 0.61)
+        
+        # object min-max range
+        self.obj_x_min, self.obj_x_max = (0.25, 0.7)    
+        self.obj_y_min, self.obj_y_max = (-0.15, 0.4)
+        self.obj_z = 0.03
+
+        # goal min-max range
+        self.goal_x_min, self.goal_x_max = (0.25, 0.7)
+        self.goal_y_min, self.goal_y_max = (0.51, 0.71)
+        self.goal_z = 0.1
+
+
+
+        
+        # self.x_max = 0.9
+        # self.y_min = -0.7
+        # self.y_max = 0.7
+        # self.z_min = 0.5
+        # self.z_max = 0.6
         
         self._pcd_sampling_num = self._task_cfg["sim"]["point_cloud_samples"]
         # observation and action space
@@ -185,9 +205,11 @@ class PCDMovingObjectTaskMulti(RLTask):
         self._dof_vel_scale = self._task_cfg["env"]["dofVelocityScale"]
 
         self._control_space = self._task_cfg["env"]["controlSpace"]
+        self._pcd_normalization = self._task_cfg["sim"]["point_cloud_normalization"]
+
+        # fixed object and goal position
         self._goal_mark = self._task_cfg["env"]["goal"]
         self._object_position = self._task_cfg["env"]["object"]
-        self._pcd_normalization = self._task_cfg["sim"]["point_cloud_normalization"]
 
 
     def set_up_scene(self, scene) -> None:
@@ -279,7 +301,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         indices = torch.arange(self._num_envs*self.robot_num, dtype=torch.int64, device=self._device)
         self.reset_idx(indices)
 
-        for idx, name in enumerate(self.robot_list):
+        for name in self.robot_list:
             self.exp_dict[name]['object_view'].enable_rigid_body_physics()
             self.exp_dict[name]['object_view'].enable_gravities()
             self.exp_dict[name]['goal_view'].disable_rigid_body_physics()
@@ -369,15 +391,25 @@ class PCDMovingObjectTaskMulti(RLTask):
         separated_envs = self.separate_env_ids(env_ids)
 
         for idx, sub_envs in enumerate(separated_envs):
-            if sub_envs.size(0) == 0:
+            sub_env_size = sub_envs.size(0)
+            if sub_env_size == 0:
                 continue
 
             robot_name = self.robot_list[idx]
             robot_dof_targets = self.robot_dof_targets[sub_envs, :]
 
             # reset object
-            object_position = torch.tensor(self._object_position, device=self._device)  # objects' local pos
-            object_pos = object_position.repeat(len(sub_envs), 1)
+            # ## fixed_values
+            # object_position = torch.tensor(self._object_position, device=self._device)  # objects' local pos
+            # object_pos = object_position.repeat(len(sub_envs), 1)
+
+            ## random_values
+            object_pos = torch.rand(sub_env_size, 2).to(device=self._device)
+            object_pos[:, 0] = self.obj_x_min + object_pos[:, 0] * (self.obj_x_max - self.obj_x_min)
+            object_pos[:, 1] = self.obj_y_min + object_pos[:, 1] * (self.obj_y_max - self.obj_y_min)
+            obj_z_coord = torch.full((sub_env_size, 1), self.obj_z, device=self._device)
+            object_pos = torch.cat([object_pos, obj_z_coord], dim=1)
+
             orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)   # objects' local orientation
             object_ori = orientation.repeat(len(sub_envs),1)
             obj_world_pos = object_pos + self.exp_dict[robot_name]['offset'][sub_envs, :] + self._env_pos[sub_envs, :]  # objects' world pos
@@ -386,8 +418,17 @@ class PCDMovingObjectTaskMulti(RLTask):
                                                                      indices=sub_envs)
 
             # reset goal
-            goal_mark_pos = torch.tensor(self._goal_mark, device=self._device)  # goals' local pos
-            goal_mark_pos = goal_mark_pos.repeat(len(sub_envs),1)
+            # ## fixed_values
+            # goal_mark_pos = torch.tensor(self._goal_mark, device=self._device)  # goals' local pos
+            # goal_mark_pos = goal_mark_pos.repeat(len(sub_envs),1)
+
+            ## random_values
+            goal_mark_pos = torch.rand(sub_env_size, 2).to(device=self._device)
+            goal_mark_pos[:, 0] = self.goal_x_min + goal_mark_pos[:, 0] * (self.goal_x_max - self.goal_x_min)
+            goal_mark_pos[:, 1] = self.goal_y_min + goal_mark_pos[:, 1] * (self.goal_y_max - self.goal_y_min)
+            goal_z_coord = torch.full((sub_env_size, 1), self.goal_z, device=self._device)
+            goal_mark_pos = torch.cat([goal_mark_pos, goal_z_coord], dim=1)
+
             goal_mark_ori = orientation.repeat(len(sub_envs),1)
             goals_world_pos = goal_mark_pos + self.exp_dict[robot_name]['offset'][sub_envs, :] + self._env_pos[sub_envs, :]
             self.exp_dict[robot_name]['goal_view'].set_world_poses(goals_world_pos,
@@ -396,11 +437,10 @@ class PCDMovingObjectTaskMulti(RLTask):
             # self.exp_dict[robot_name]['goal_view'].disable_rigid_body_physics()
 
             flange_pos = deepcopy(object_pos)
-            flange_pos[:, 0] -= 0.2     # x
-            flange_pos[:, 1] -= 0.3     # y
-            flange_pos[:, 2] = 0.4      # z
-
-            # Extract the x and y coordinates
+            # flange_pos[:, 0] -= 0.2     # x
+            flange_pos[:, 0] -= 0.0     # x
+            flange_pos[:, 1] -= 0.25    # y
+            flange_pos[:, 2] = 0.4      # z            # Extract the x and y coordinates
             flange_xy = flange_pos[:, :2]
             object_xy = object_pos[:, :2]
 
@@ -506,9 +546,8 @@ class PCDMovingObjectTaskMulti(RLTask):
             robots_dof_pos[local_abs_env_ids] = self.exp_dict[robot_name]['robot_view'].get_joint_positions(clone=False)[:, 0:6]
             robots_dof_vel[local_abs_env_ids] = self.exp_dict[robot_name]['robot_view'].get_joint_velocities(clone=False)[:, 0:6]
             
-            if idx == 0:
-                print(self.exp_dict[robot_name]['robot_view'].get_joint_positions(clone=False)[:, 6:])
-            # rest of the joints are not used for control. They are fixed joints at each episode.
+            # if idx == 0:
+            #     print(self.exp_dict[robot_name]['robot_view'].get_joint_positions(clone=False)[:, 6:])
         
             # self.visualize_pcd(tool_pcd_transformed, object_pcd_transformed,
             #                    tool_pos, tool_rot, object_pos, object_rot,
@@ -575,7 +614,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         object_goal_distance_reward = self.relu(-(cur_o_g_d - init_o_g_d)/init_o_g_d)
 
         # completion reward
-        self.done_envs = cur_o_g_d <= 0.1
+        self.done_envs = cur_o_g_d <= 0.05
         # completion_reward = torch.where(self.done_envs, torch.full_like(cur_t_g_d, 100.0)[self.done_envs], torch.zeros_like(cur_t_g_d))
         self.completion_reward[self.done_envs] = torch.full_like(cur_o_g_d, 300.0)[self.done_envs]
 
@@ -598,7 +637,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         reset = torch.where(self.object_pos_xy[:, 1] < self.y_min, ones, reset)
         reset = torch.where(self.object_pos_xy[:, 0] > self.x_max, ones, reset)
         reset = torch.where(self.object_pos_xy[:, 1] > self.y_max, ones, reset)
-        # reset = torch.where(self.object_pos_xy[:, 2] > 0.5, ones, reset)
+        # reset = torch.where(self.object_pos_xy[:, 2] > 0.5, ones, reset)    # prevent unexpected object bouncing
 
         # object reached
         reset = torch.where(self.done_envs, ones, reset)
