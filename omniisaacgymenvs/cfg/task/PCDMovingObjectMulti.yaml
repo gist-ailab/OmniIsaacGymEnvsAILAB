@@ -8,7 +8,8 @@ env:
   # numEnvs: ${resolve_default:4096,${...num_envs}}
   # numEnvs: ${resolve_default:2048,${...num_envs}}
   numEnvs: ${resolve_default:4,${...num_envs}}
-  envSpacing: 15.0
+  envSpacing: 8.0
+  subSpacing: 2.0
   episodeLength: 300
   # episodeLength: 100
   enableDebugVis: False
@@ -16,7 +17,8 @@ env:
   clipObservations: 5.0
   clipActions: 1.0
 
-  controlFrequencyInv: 2 # 60 Hz
+  controlFrequencyInv: 2 # 60 Hz, default is 2
+  # controlFrequencyInv: 1 # 60 Hz
 
   startPositionNoise: 0.0
   startRotationNoise: 0.0
@@ -33,7 +35,9 @@ env:
   # target: [0.85, -0.45, 0.03] # the object's initial position
   # target: [0.5, 0.0, 0.03] # the object's initial position
   # target: [0.8, -0.1, 0.025] # the object's initial position
-  object: [0.55, -0.25, 0.03] # the object's initial position
+  
+  object: [0.55, -0.1, 0.03] # the object's initial position
+  
   # target: [0.35, -0.0, 0.25] # the object's initial position
   # target: [0.5, -0.1, 0.025] # the object's initial position
   cube: [0.8, -0.45, 0.025] # the object's initial position
@@ -117,7 +121,7 @@ sim:
     contact_offset: 0.005
     rest_offset: 0.0
   
-  target: # BSH
+  object: # BSH
     override_usd_defaults: False
     # make_kinematic: False # BSH
     # make_kinematic: False # BSH
@@ -162,7 +166,7 @@ sim:
     enable_gyroscopic_forces: True
     # disable_rigid_body_physics: True
     # disable_rigid_body_physics: False
-    fixed_base: False
+    fixed_base: True
     
     # also in stage params
     # per-actor
