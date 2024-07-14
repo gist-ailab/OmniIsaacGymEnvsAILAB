@@ -56,8 +56,8 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.dt = 1 / 120.0
         self._env = env
 
-        # self.robot_list = ['ur5e_tool', 'ur5e_fork', 'ur5e_knife', 'ur5e_ladle', 'ur5e_spatular', 'ur5e_spoon']
-        self.robot_list = ['ur5e_spoon']
+        self.robot_list = ['ur5e_tool', 'ur5e_fork', 'ur5e_knife', 'ur5e_ladle', 'ur5e_spatular', 'ur5e_spoon']
+        # self.robot_list = ['ur5e_spoon']
         self.robot_num = len(self.robot_list)
         self.total_env_num = self._num_envs * self.robot_num
         self.initial_object_goal_distance = torch.empty(self._num_envs*len(self.robot_list)).to(self.cfg["rl_device"])
@@ -466,18 +466,21 @@ class PCDMovingObjectTaskMulti(RLTask):
             target_dof_pos = torch.empty(0).to(device=self._device)
 
             for i in range(initialized_pos.batch):  # solve IK with cuRobo
-                result = self.ik_solver.solve_single(initialized_pos[i])
-                if result.success:
+                solving_ik = False
+                while not solving_ik:
+                    # Though the all initialized poses are valid, there is a possibility that the IK solver fails.
+                    result = self.ik_solver.solve_single(initialized_pos[i])
+                    solving_ik = result.success
+                    if not result.success:
+                        # print(f"IK solver failed. Initialize a robot in {robot_name} env {sub_envs[i]} with default pose.")
+                        # print(f"Failed pose: {initialized_pos[i]}")
+                        continue
                     target_dof_pos = torch.cat((target_dof_pos, result.solution[result.success]), dim=0)
-                else:
-                    print(f"IK solver failed. Initialize a robot in {robot_name} env {sub_envs[i]} with default pose.")
-                    target_dof_pos = torch.cat((target_dof_pos, self.robot_default_dof_pos[:6].unsqueeze(0)), dim=0)
 
             robot_dof_targets[:, :6] = torch.clamp(target_dof_pos,
                                                    self.robot_dof_lower_limits[:6].repeat(len(sub_envs),1),
                                                    self.robot_dof_upper_limits[:6].repeat(len(sub_envs),1))
             robot_dof_targets[:, 6:] = tool_pos
-            # TODO: 여기에서 정해진 tool pose 가 episode 끝날 때 까지 유지될 수 있도록 해야 함.
 
             self.exp_dict[robot_name]['robot_view'].set_joint_positions(robot_dof_targets, indices=sub_envs)
             # self.exp_dict[robot_name]['robot_view'].set_joint_position_targets(robot_dof_targets, indices=sub_envs)
@@ -652,8 +655,7 @@ class PCDMovingObjectTaskMulti(RLTask):
                       tool_pos, tool_rot,
                       object_pos, object_rot,
                       goal_pos,
-                    #   farthest_idx
-                      ):
+                      view_idx=0):                    
         view_idx = 0
 
         base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
