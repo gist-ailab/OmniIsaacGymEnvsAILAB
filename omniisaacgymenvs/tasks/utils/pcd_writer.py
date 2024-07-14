@@ -97,7 +97,7 @@ class PointcloudWriter(Writer):
             formatted_date = now.strftime("%y%m%d_%H%M%S")
             file_path = os.path.join(ply_out_dir, f"pcd_{formatted_date}.ply")
         else:
-            file_path = os.path.join(ply_out_dir, f"pcd_{self.name}.ply")
+            file_path = os.path.join(ply_out_dir, f"{self.name}.ply")
 
         if isinstance(data, torch.Tensor):
             pcd_np = data.squeeze(0).detach().cpu().numpy()
