@@ -1,6 +1,7 @@
 import torch
 from torch import linalg as LA
 import numpy as np
+import math
 from copy import deepcopy
  
 from omni.isaac.core.utils.extensions import enable_extension
@@ -56,7 +57,8 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.dt = 1 / 120.0
         self._env = env
 
-        self.robot_list = ['ur5e_tool', 'ur5e_fork', 'ur5e_knife', 'ur5e_ladle', 'ur5e_spatular', 'ur5e_spoon']
+        self.robot_list = ['ur5e_fork', 'ur5e_hammer', 'ur5e_ladle', 'ur5e_roller',
+                           'ur5e_spanner', 'ur5e_spatular', 'ur5e_spoon']
         # self.robot_list = ['ur5e_spoon']
         self.robot_num = len(self.robot_list)
         self.total_env_num = self._num_envs * self.robot_num
@@ -79,18 +81,10 @@ class PCDMovingObjectTaskMulti(RLTask):
             self.tool_pris.unsqueeze(0)
         ])
 
-        self.tool_rot_x = 70 # 70 degree
-        self.tool_rot_z = 0     # 0 degree
-        self.tool_rot_y = -90 # -90 degree
-
         # workspace 2D boundary
-        self.x_min, self.x_max = (0.2, 0.9)
-        self.y_min, self.y_max = (-0.7, 0.7)
-        self.z_min, self.z_max = (0.5, 0.6)
-
-        # self.x_min, self.x_max = (0.19, 0.91)
-        # self.y_min, self.y_max = (-0.69, 0.71)
-        # self.z_min, self.z_max = (0.49, 0.61)
+        self.x_min, self.x_max = (0.2, 0.8)
+        self.y_min, self.y_max = (-0.8, 0.8)
+        self.z_min, self.z_max = (0.5, 0.7)
         
         # object min-max range
         self.obj_x_min, self.obj_x_max = (0.25, 0.7)    
@@ -101,15 +95,6 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.goal_x_min, self.goal_x_max = (0.25, 0.7)
         self.goal_y_min, self.goal_y_max = (0.51, 0.71)
         self.goal_z = 0.1
-
-
-
-        
-        # self.x_max = 0.9
-        # self.y_min = -0.7
-        # self.y_max = 0.7
-        # self.z_min = 0.5
-        # self.z_max = 0.6
         
         self._pcd_sampling_num = self._task_cfg["sim"]["point_cloud_samples"]
         # observation and action space
@@ -213,10 +198,12 @@ class PCDMovingObjectTaskMulti(RLTask):
 
 
     def set_up_scene(self, scene) -> None:
+        self.num_cols = math.ceil(self.robot_num ** 0.5)    # Calculate the side length of the square
+
         for idx, name in enumerate(self.robot_list):
             # Make the suv-environments into a grid
-            x = idx // 2
-            y = idx % 2
+            x = idx // self.num_cols
+            y = idx % self.num_cols
             get_robot(name, self._sim_config, self.default_zero_env_path,
                       translation=torch.tensor([x * self._sub_spacing, y * self._sub_spacing, 0.0]))
             get_object(name+'_object', self._sim_config, self.default_zero_env_path)
@@ -231,8 +218,8 @@ class PCDMovingObjectTaskMulti(RLTask):
             self.exp_dict[name]['goal_view'] = RigidPrimView(prim_paths_expr=f"/World/envs/.*/{name}_goal", name=f"{name}_goal_view", reset_xform_properties=False)
             
             # offset is only need for the object and goal
-            x = idx // 2
-            y = idx % 2
+            x = idx // self.num_cols
+            y = idx % self.num_cols
             self.exp_dict[name]['offset'] = torch.tensor([x * self._sub_spacing,
                                                           y* self._sub_spacing,
                                                           0.0],
@@ -409,13 +396,15 @@ class PCDMovingObjectTaskMulti(RLTask):
             object_pos[:, 1] = self.obj_y_min + object_pos[:, 1] * (self.obj_y_max - self.obj_y_min)
             obj_z_coord = torch.full((sub_env_size, 1), self.obj_z, device=self._device)
             object_pos = torch.cat([object_pos, obj_z_coord], dim=1)
-
             orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)   # objects' local orientation
             object_ori = orientation.repeat(len(sub_envs),1)
             obj_world_pos = object_pos + self.exp_dict[robot_name]['offset'][sub_envs, :] + self._env_pos[sub_envs, :]  # objects' world pos
+            zero_vel = torch.zeros((len(sub_envs), 6), device=self._device)
             self.exp_dict[robot_name]['object_view'].set_world_poses(obj_world_pos,
                                                                      object_ori,
                                                                      indices=sub_envs)
+            self.exp_dict[robot_name]['object_view'].set_velocities(zero_vel,
+                                                                    indices=sub_envs)
 
             # reset goal
             # ## fixed_values
@@ -428,7 +417,6 @@ class PCDMovingObjectTaskMulti(RLTask):
             goal_mark_pos[:, 1] = self.goal_y_min + goal_mark_pos[:, 1] * (self.goal_y_max - self.goal_y_min)
             goal_z_coord = torch.full((sub_env_size, 1), self.goal_z, device=self._device)
             goal_mark_pos = torch.cat([goal_mark_pos, goal_z_coord], dim=1)
-
             goal_mark_ori = orientation.repeat(len(sub_envs),1)
             goals_world_pos = goal_mark_pos + self.exp_dict[robot_name]['offset'][sub_envs, :] + self._env_pos[sub_envs, :]
             self.exp_dict[robot_name]['goal_view'].set_world_poses(goals_world_pos,
@@ -514,8 +502,8 @@ class PCDMovingObjectTaskMulti(RLTask):
             object_pos, object_rot_quaternion = self.exp_dict[robot_name]['object_view'].get_local_poses()
             
             # local object pose values are indicate with the environment ids with regard to the robot set
-            x = (idx // 2) * self._sub_spacing
-            y = (idx % 2) * self._sub_spacing
+            x = (idx // self.num_cols) * self._sub_spacing
+            y = (idx % self.num_cols) * self._sub_spacing
             object_pos[:, :2] -= torch.tensor([x, y], device=self._device)
             
             object_rot = quaternion_to_matrix(object_rot_quaternion)
@@ -554,7 +542,8 @@ class PCDMovingObjectTaskMulti(RLTask):
         
             # self.visualize_pcd(tool_pcd_transformed, object_pcd_transformed,
             #                    tool_pos, tool_rot, object_pos, object_rot,
-            #                    self.goal_pos[local_abs_env_ids])
+            #                    self.goal_pos[local_abs_env_ids],
+            #                    view_idx=idx)
         self.object_pos_xyz = torch.mean(object_pcd_concat, dim=1)
         self.object_pos_xy = self.object_pos_xyz[:, [0, 1]]
 
@@ -656,8 +645,6 @@ class PCDMovingObjectTaskMulti(RLTask):
                       object_pos, object_rot,
                       goal_pos,
                       view_idx=0):                    
-        view_idx = 0
-
         base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
         tool_pos_np = tool_pos[view_idx].cpu().numpy()
         tool_rot_np = tool_rot[view_idx].cpu().numpy()
