@@ -394,6 +394,7 @@ class PCDMovingObjectTaskMulti(RLTask):
             object_pos = torch.rand(sub_env_size, 2).to(device=self._device)
             object_pos[:, 0] = self.obj_x_min + object_pos[:, 0] * (self.obj_x_max - self.obj_x_min)
             object_pos[:, 1] = self.obj_y_min + object_pos[:, 1] * (self.obj_y_max - self.obj_y_min)
+
             obj_z_coord = torch.full((sub_env_size, 1), self.obj_z, device=self._device)
             object_pos = torch.cat([object_pos, obj_z_coord], dim=1)
             orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)   # objects' local orientation
@@ -415,6 +416,7 @@ class PCDMovingObjectTaskMulti(RLTask):
             goal_mark_pos = torch.rand(sub_env_size, 2).to(device=self._device)
             goal_mark_pos[:, 0] = self.goal_x_min + goal_mark_pos[:, 0] * (self.goal_x_max - self.goal_x_min)
             goal_mark_pos[:, 1] = self.goal_y_min + goal_mark_pos[:, 1] * (self.goal_y_max - self.goal_y_min)
+            
             goal_z_coord = torch.full((sub_env_size, 1), self.goal_z, device=self._device)
             goal_mark_pos = torch.cat([goal_mark_pos, goal_z_coord], dim=1)
             goal_mark_ori = orientation.repeat(len(sub_envs),1)
