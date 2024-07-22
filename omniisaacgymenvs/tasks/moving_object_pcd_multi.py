@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from torch import linalg as LA
 import numpy as np
 import math
@@ -33,7 +34,7 @@ from omni.isaac.core.utils.types import ArticulationActions
 from skrl.utils import omniverse_isaacgym_utils
 
 import open3d as o3d
-from pytorch3d.transforms import quaternion_to_matrix,axis_angle_to_quaternion, quaternion_multiply
+from pytorch3d.transforms import quaternion_to_matrix,axis_angle_to_quaternion, quaternion_multiply, matrix_to_quaternion
 
 # post_physics_step calls
 # - get_observations()
@@ -59,11 +60,9 @@ class PCDMovingObjectTaskMulti(RLTask):
 
         self.robot_list = ['ur5e_fork', 'ur5e_hammer', 'ur5e_ladle', 'ur5e_roller',
                            'ur5e_spanner', 'ur5e_spatular', 'ur5e_spoon']
-        # self.robot_list = ['ur5e_spoon']
+        # self.robot_list = ['ur5e_spatular']
         self.robot_num = len(self.robot_list)
         self.total_env_num = self._num_envs * self.robot_num
-        self.initial_object_goal_distance = torch.empty(self._num_envs*len(self.robot_list)).to(self.cfg["rl_device"])
-        self.completion_reward = torch.zeros(self._num_envs*len(self.robot_list)).to(self.cfg["rl_device"])
         
         self.relu = torch.nn.ReLU()
 
@@ -100,7 +99,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         # observation and action space
         pcd_observations = self._pcd_sampling_num * 2 * 3   # TODO: 환경 개수 * 로봇 대수 인데 이게 맞는지 확인 필요
         # 2 is a number of point cloud masks(tool and object) and 3 is a cartesian coordinate
-        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 2
+        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 2 + 2
         '''
         refer to observations in get_observations()
         pcd_observations                              # [NE, 3*2*pcd_sampling_num]
@@ -109,6 +108,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         flange_pos,                                   # [NE, 3]
         flange_rot,                                   # [NE, 4]
         goal_pos_xy,                                  # [NE, 2]
+        object_to_goal_vector_norm                    # [NE, 2]
         
         '''
 
@@ -246,6 +246,9 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.jacobians = torch.zeros((self._num_envs*self.robot_num, 15, 6, 11), device=self._device)
         ''' ['shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint', 'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint',
              'grasped_position', 'flange_revolute_yaw', 'flange_revolute_pitch', 'flange_revolute_roll', 'tool_prismatic'] '''
+        
+        self.completion_reward = torch.zeros(self._num_envs*self.robot_num).to(self._device)
+
         self.flange_pos = torch.zeros((self._num_envs*self.robot_num, 3), device=self._device)
         self.flange_rot = torch.zeros((self._num_envs*self.robot_num, 4), device=self._device)
 
@@ -254,6 +257,11 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.empty_separated_envs = [torch.empty(0, dtype=torch.int32, device=self._device) for _ in self.robot_list]
         self.total_env_ids = torch.arange(self._num_envs*self.robot_num, dtype=torch.int32, device=self._device)
         self.local_env_ids = torch.arange(self.ref_robot.count, dtype=torch.int32, device=self._device)
+
+        self.initial_object_goal_distance = torch.empty(self._num_envs*self.robot_num).to(self._device)
+        self.prev_object_pos_xy = None
+        # self.prev_action = None   # TODO: 코드 실행해보고 없어도 되면 이 줄 삭제
+
 
     # change from RLTask.cleanup()
     def cleanup(self) -> None:
@@ -386,17 +394,17 @@ class PCDMovingObjectTaskMulti(RLTask):
             robot_dof_targets = self.robot_dof_targets[sub_envs, :]
 
             # reset object
-            # ## fixed_values
-            # object_position = torch.tensor(self._object_position, device=self._device)  # objects' local pos
-            # object_pos = object_position.repeat(len(sub_envs), 1)
+            ## fixed_values
+            object_position = torch.tensor(self._object_position, device=self._device)  # objects' local pos
+            object_pos = object_position.repeat(len(sub_envs), 1)
 
-            ## random_values
-            object_pos = torch.rand(sub_env_size, 2).to(device=self._device)
-            object_pos[:, 0] = self.obj_x_min + object_pos[:, 0] * (self.obj_x_max - self.obj_x_min)
-            object_pos[:, 1] = self.obj_y_min + object_pos[:, 1] * (self.obj_y_max - self.obj_y_min)
+            # ## random_values
+            # object_pos = torch.rand(sub_env_size, 2).to(device=self._device)
+            # object_pos[:, 0] = self.obj_x_min + object_pos[:, 0] * (self.obj_x_max - self.obj_x_min)
+            # object_pos[:, 1] = self.obj_y_min + object_pos[:, 1] * (self.obj_y_max - self.obj_y_min)
+            # obj_z_coord = torch.full((sub_env_size, 1), self.obj_z, device=self._device)
+            # object_pos = torch.cat([object_pos, obj_z_coord], dim=1)
 
-            obj_z_coord = torch.full((sub_env_size, 1), self.obj_z, device=self._device)
-            object_pos = torch.cat([object_pos, obj_z_coord], dim=1)
             orientation = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device)   # objects' local orientation
             object_ori = orientation.repeat(len(sub_envs),1)
             obj_world_pos = object_pos + self.exp_dict[robot_name]['offset'][sub_envs, :] + self._env_pos[sub_envs, :]  # objects' world pos
@@ -408,17 +416,17 @@ class PCDMovingObjectTaskMulti(RLTask):
                                                                     indices=sub_envs)
 
             # reset goal
-            # ## fixed_values
-            # goal_mark_pos = torch.tensor(self._goal_mark, device=self._device)  # goals' local pos
-            # goal_mark_pos = goal_mark_pos.repeat(len(sub_envs),1)
+            ## fixed_values
+            goal_mark_pos = torch.tensor(self._goal_mark, device=self._device)  # goals' local pos
+            goal_mark_pos = goal_mark_pos.repeat(len(sub_envs),1)
 
-            ## random_values
-            goal_mark_pos = torch.rand(sub_env_size, 2).to(device=self._device)
-            goal_mark_pos[:, 0] = self.goal_x_min + goal_mark_pos[:, 0] * (self.goal_x_max - self.goal_x_min)
-            goal_mark_pos[:, 1] = self.goal_y_min + goal_mark_pos[:, 1] * (self.goal_y_max - self.goal_y_min)
-            
-            goal_z_coord = torch.full((sub_env_size, 1), self.goal_z, device=self._device)
-            goal_mark_pos = torch.cat([goal_mark_pos, goal_z_coord], dim=1)
+            # ## random_values
+            # goal_mark_pos = torch.rand(sub_env_size, 2).to(device=self._device)
+            # goal_mark_pos[:, 0] = self.goal_x_min + goal_mark_pos[:, 0] * (self.goal_x_max - self.goal_x_min)
+            # goal_mark_pos[:, 1] = self.goal_y_min + goal_mark_pos[:, 1] * (self.goal_y_max - self.goal_y_min)
+            # goal_z_coord = torch.full((sub_env_size, 1), self.goal_z, device=self._device)
+            # goal_mark_pos = torch.cat([goal_mark_pos, goal_z_coord], dim=1)
+
             goal_mark_ori = orientation.repeat(len(sub_envs),1)
             goals_world_pos = goal_mark_pos + self.exp_dict[robot_name]['offset'][sub_envs, :] + self._env_pos[sub_envs, :]
             self.exp_dict[robot_name]['goal_view'].set_world_poses(goals_world_pos,
@@ -429,7 +437,7 @@ class PCDMovingObjectTaskMulti(RLTask):
             flange_pos = deepcopy(object_pos)
             # flange_pos[:, 0] -= 0.2     # x
             flange_pos[:, 0] -= 0.0     # x
-            flange_pos[:, 1] -= 0.25    # y
+            flange_pos[:, 1] -= 0.3    # y
             flange_pos[:, 2] = 0.4      # z            # Extract the x and y coordinates
             flange_xy = flange_pos[:, :2]
             object_xy = object_pos[:, :2]
@@ -490,9 +498,11 @@ class PCDMovingObjectTaskMulti(RLTask):
         # tasks/utils/pcd_writer.py 에서 pcd sample하고 tensor로 변환해서 가져옴
         # pointcloud = self.pointcloud_listener.get_pointcloud_data()
 
-        tools_pcd_flattened = torch.empty(0).to(device=self._device)
-        objects_pcd_flattened = torch.empty(0).to(device=self._device)
-        object_pcd_concat = torch.empty(0).to(device=self._device)  # concatenate object point cloud for getting xyz position
+        tools_pcd_flattened = torch.empty(self._num_envs*self.robot_num, self._pcd_sampling_num*3).to(device=self._device)
+        objects_pcd_flattened = torch.empty(self._num_envs*self.robot_num, self._pcd_sampling_num*3).to(device=self._device)
+        object_pcd_set = torch.empty(self._num_envs*self.robot_num, self._pcd_sampling_num, 3).to(device=self._device) # object point cloud set for getting xyz position
+        # multiply by 3 because the point cloud has 3 channels (x, y, z)
+
         self.goal_pos = torch.empty(self._num_envs*self.robot_num, 3).to(device=self._device)  # save goal position for getting xy position
         robots_dof_pos = torch.empty(self._num_envs*self.robot_num, 6).to(device=self._device)
         robots_dof_vel = torch.empty(self._num_envs*self.robot_num, 6).to(device=self._device)
@@ -519,7 +529,23 @@ class PCDMovingObjectTaskMulti(RLTask):
                                                     self.num_envs,
                                                     device=self._device)
             tool_pcd_flattend = tool_pcd_transformed.contiguous().view(self._num_envs, -1)
-            tools_pcd_flattened = torch.cat((tools_pcd_flattened, tool_pcd_flattend), dim=0)
+            tools_pcd_flattened[local_abs_env_ids] = tool_pcd_flattend
+
+
+            '''
+            # calculate farthest distance and idx from the tool to the goal
+            diff = tool_pcd_transformed - self.flange_pos[:, None, :]
+            distance = diff.norm(dim=2)  # [B, N]
+
+            # Find the index and value of the farthest point from the base coordinate
+            farthest_idx = distance.argmax(dim=1)  # [B]
+            # farthest_val = distance.gather(1, farthest_idx.unsqueeze(1)).squeeze(1)  # [B]
+            self.tool_end_point = tool_pcd_transformed.gather(1, farthest_idx.view(B, 1, 1).expand(B, 1, 3)).squeeze(1).squeeze(1)  # [B, 3]
+            
+            '''
+
+
+
 
             # concat object point cloud
             object_pcd_transformed = pcd_registration(self.exp_dict[robot_name]['object_pcd'],
@@ -527,9 +553,9 @@ class PCDMovingObjectTaskMulti(RLTask):
                                                       object_rot,
                                                       self.num_envs,
                                                       device=self._device)
-            object_pcd_concat = torch.cat((object_pcd_concat, object_pcd_transformed), dim=0)   # concat for calculating xyz position
+            object_pcd_set[local_abs_env_ids] = object_pcd_transformed  # for calculating xyz position
             object_pcd_flattend = object_pcd_transformed.contiguous().view(self._num_envs, -1)
-            objects_pcd_flattened = torch.cat((objects_pcd_flattened, object_pcd_flattend), dim=0)
+            objects_pcd_flattened[local_abs_env_ids] = object_pcd_flattend
 
             local_goal_pos = self.exp_dict[robot_name]['goal_view'].get_local_poses()[0]
             local_goal_pos[:, :2] -= torch.tensor([x, y], device=self._device)  # revise the goal pos
@@ -539,17 +565,114 @@ class PCDMovingObjectTaskMulti(RLTask):
             robots_dof_pos[local_abs_env_ids] = self.exp_dict[robot_name]['robot_view'].get_joint_positions(clone=False)[:, 0:6]
             robots_dof_vel[local_abs_env_ids] = self.exp_dict[robot_name]['robot_view'].get_joint_velocities(clone=False)[:, 0:6]
             
+            imaginary_grasping_point = self.get_imaginary_grasping_point(self.flange_pos[local_abs_env_ids], self.flange_rot[local_abs_env_ids])
+            cropped_tool_pcd = self.crop_tool_pcd(tool_pcd_transformed, imaginary_grasping_point)
+            tool_tip_point = self.get_tool_tip_position(imaginary_grasping_point, tool_pcd_transformed)
+            principal_axes = self.apply_pca(cropped_tool_pcd)
+            quaternions = self.calculate_tool_orientation(principal_axes, tool_tip_point, imaginary_grasping_point)
+
             # if idx == 0:
             #     print(self.exp_dict[robot_name]['robot_view'].get_joint_positions(clone=False)[:, 6:])
         
-            # self.visualize_pcd(tool_pcd_transformed, object_pcd_transformed,
-            #                    tool_pos, tool_rot, object_pos, object_rot,
+            # self.visualize_pcd(tool_pcd_transformed, cropped_tool_pcd,
+            #                    tool_pos, tool_rot,
+            #                    imaginary_grasping_point,
+            #                    tool_tip_point,
+            #                    principal_axes,
+            #                    quaternions,
+            #                    object_pcd_transformed,
+            #                    object_pos, object_rot,
             #                    self.goal_pos[local_abs_env_ids],
-            #                    view_idx=idx)
-        self.object_pos_xyz = torch.mean(object_pcd_concat, dim=1)
+            #                    view_idx=0)
+
+
+        
+        
+            '''
+            tool_pcd = tool_pcd_transformed
+            cropped_pcd = cropped_tool_pcd
+            grasping_point = imaginary_grasping_point
+            imaginary_grasping_points = imaginary_grasping_point
+            tool_tip_points = tool_tip_point
+            grasping_points = grasping_point
+
+            bbox_size = 0.1
+            radius=0.05
+
+            index = 1
+            base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
+
+            # Visualize cropped point cloud
+            cropped_pcd_np = cropped_tool_pcd[index].squeeze(0).detach().cpu().numpy()
+            cropped_point_cloud = o3d.geometry.PointCloud()
+            cropped_point_cloud.points = o3d.utility.Vector3dVector(cropped_pcd_np)
+
+            # Visualize full tool point cloud
+            tool_pcd_np = tool_pcd_transformed[index].squeeze(0).detach().cpu().numpy()
+            tool_point_cloud = o3d.geometry.PointCloud()
+            tool_point_cloud.points = o3d.utility.Vector3dVector(tool_pcd_np)
+
+            # Visualize tool tip point
+            tool_tip_point_np = tool_tip_point[index].detach().cpu().numpy()
+            tip_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.005)
+            tip_sphere.paint_uniform_color([0, 0, 1])  # Blue color for tool tip
+            tip_sphere.translate(tool_tip_point_np) 
+
+            # Principal axis
+            principal_axis = principal_axes[index, :, 0].cpu().numpy()
+            mean_point = cropped_pcd_np.mean(axis=0)
+            start_point = mean_point - principal_axis * 0.5
+            end_point = mean_point + principal_axis * 0.5
+
+            # Create line set for the principal axis
+            line_set = o3d.geometry.LineSet()
+            line_set.points = o3d.utility.Vector3dVector([start_point, end_point])
+            line_set.lines = o3d.utility.Vector2iVector([[0, 1]])
+            line_set.colors = o3d.utility.Vector3dVector([[1, 0, 0]])  # Yellow color for principal axis
+
+            # Quaternion to rotation matrix
+            quaternion = quaternions[index].cpu().numpy()
+            rot_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(quaternion)
+            
+            # Create arrow for the principal axis
+            arrow = o3d.geometry.TriangleMesh.create_arrow(cylinder_radius=0.005, cone_radius=0.01, cylinder_height=0.1, cone_height=0.02)
+            arrow.paint_uniform_color([1, 0, 1])  # Magenta color for orientation arrow
+            T_arrow = np.eye(4)
+            # T_arrow[:3, 3] = mean_point
+            T_arrow[:3, :3] = rot_matrix
+            arrow.transform(T_arrow)
+
+            # Visualize grasping point
+            grasping_point_np = imaginary_grasping_point[index].detach().cpu().numpy()
+            grasping_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.005)
+            grasping_sphere.paint_uniform_color([0, 1, 1])  # Cyan color for grasping point
+            grasping_sphere.translate(grasping_point_np)
+
+            # Translate the arrow to the grasping point
+            arrow.translate(grasping_point_np)
+
+            o3d.visualization.draw_geometries([base_coord,
+                                               tool_point_cloud,
+                                               cropped_point_cloud,
+                                               tip_sphere,
+                                               line_set,
+                                               arrow,
+                                               grasping_sphere
+                                               ],
+                                    window_name=f'point cloud')
+            '''
+
+        
+        self.object_pos_xyz = torch.mean(object_pcd_set, dim=1)
         self.object_pos_xy = self.object_pos_xyz[:, [0, 1]]
 
         self.goal_pos_xy = self.goal_pos[:, [0, 1]]
+
+        # the unit vector from the object to the goal
+        object_to_goal_vec = self.goal_pos_xy - self.object_pos_xy
+        object_to_goal_unit_vec = object_to_goal_vec / (LA.vector_norm(object_to_goal_vec, dim=1, keepdim=True) + 1e-8)
+
+
 
         # # normalize robot_dof_pos
         # dof_pos_scaled = 2.0 * (robots_dof_pos - self.robot_dof_lower_limits) \
@@ -574,7 +697,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         7. goal position
         '''
 
-        '''NE = self._num_envs * self.robot_num'''
+        '''the number of evironments; NE = self._num_envs * self.robot_num'''
         self.obs_buf = torch.cat((
                                   tools_pcd_flattened,                                          # [NE, N*3], point cloud
                                   objects_pcd_flattened,                                        # [NE, N*3], point cloud
@@ -584,6 +707,7 @@ class PCDMovingObjectTaskMulti(RLTask):
                                   self.flange_pos,                                              # [NE, 3]
                                   self.flange_rot,                                              # [NE, 4]
                                   self.goal_pos_xy,                                             # [NE, 2]
+                                  object_to_goal_unit_vec,                                      # [NE, 2]    
                                  ), dim=1)
 
         if self._control_space == "cartesian":
@@ -600,21 +724,76 @@ class PCDMovingObjectTaskMulti(RLTask):
     def calculate_metrics(self) -> None:
         initialized_idx = self.progress_buf == 1    # initialized index를 통해 progress_buf가 1인 경우에만 initial distance 계산
         self.completion_reward[:] = 0.0 # reset completion reward
-        current_object_goal_distance = LA.norm(self.goal_pos_xy - self.object_pos_xy, ord=2, dim=1)
+
+        if not hasattr(self, 'prev_object_pos_xy') or not hasattr(self, 'prev_flange_pos'):
+            self.prev_object_pos_xy = self.object_pos_xy.clone()
+            self.prev_flange_pos = self.flange_pos.clone()
+
+        current_object_goal_distance = LA.vector_norm(self.goal_pos_xy - self.object_pos_xy, ord=2, dim=1)
         self.initial_object_goal_distance[initialized_idx] = current_object_goal_distance[initialized_idx]
 
-        init_o_g_d = self.initial_object_goal_distance
-        cur_o_g_d = current_object_goal_distance
-        object_goal_distance_reward = self.relu(-(cur_o_g_d - init_o_g_d)/init_o_g_d)
+        # Object-Goal Distance Reward
+        object_goal_distance_reward = torch.where(
+            current_object_goal_distance < self.initial_object_goal_distance,
+            self.relu(-(current_object_goal_distance - self.initial_object_goal_distance) / (self.initial_object_goal_distance + 1e-8)),
+            torch.zeros_like(current_object_goal_distance)  # No reward if distance increased
+        )
+
+        # Object movement
+        object_movement = self.object_pos_xy - self.prev_object_pos_xy
+        object_moved_norm = LA.vector_norm(object_movement, ord=2, dim=1)
+
+        # End-effector movement and velocity
+        ee_movement = self.flange_pos[:, :2] - self.prev_flange_pos[:, :2]
+        ee_moved_norm = LA.vector_norm(ee_movement, ord=2, dim=1)
+
+        # Movement towards goal
+        # How aligned the object’s movement is with the direction towards the goal. It's essentially calculating the dot product of the movement vector and the direction to the goal.
+        # The denominator calculates the magnitude of the vector pointing from the previous object position to the goal.
+        movement_towards_goal = torch.sum(object_movement * (self.goal_pos_xy - self.prev_object_pos_xy), dim=1) / (LA.norm(self.goal_pos_xy - self.prev_object_pos_xy, ord=2, dim=1) + 1e-8)
+        # Reward for movement towards goal, penalize movement away from goal
+        movement_reward = torch.where(movement_towards_goal > 0,
+                                      movement_towards_goal * 2.0,  # Positive reward for moving towards goal
+                                      movement_towards_goal * 4.0)  # Stronger negative reward for moving away from goal
+
+        # Tool-Object Interaction Reward
+        object_moved = torch.linalg.vector_norm(object_movement, ord=2, dim=1) > 1e-4  # Threshold to detect movement
+        interaction_reward = object_moved.float() * 0.1  # Small reward for moving the object
+
+        # End-effector Movement Efficiency Reward
+        efficiency_reward = torch.where(ee_moved_norm > 0,
+                                        object_moved_norm / (ee_moved_norm + 1e-8),
+                                        torch.zeros_like(ee_moved_norm))
+        efficiency_reward = torch.clamp(efficiency_reward, 0, 1) * 0.5
+
+        # Relative velocity between end-effector and object
+        object_velocity = object_movement / self.dt
+        ee_velocity = ee_movement / self.dt
+        relative_velocity = torch.linalg.vector_norm(ee_velocity - object_velocity, ord=2, dim=1)
+        relative_velocity_panaly = -relative_velocity * 0.1  # Penalize high relative velocity
+
+
+        # Combine rewards
+        total_reward = (
+            object_goal_distance_reward * 2.0 +
+            movement_reward +
+            interaction_reward +
+            efficiency_reward +
+            relative_velocity_panaly            
+        )
 
         # completion reward
-        self.done_envs = cur_o_g_d <= 0.05
+        self.done_envs = current_object_goal_distance <= 0.05
         # completion_reward = torch.where(self.done_envs, torch.full_like(cur_t_g_d, 100.0)[self.done_envs], torch.zeros_like(cur_t_g_d))
-        self.completion_reward[self.done_envs] = torch.full_like(cur_o_g_d, 300.0)[self.done_envs]
+        self.completion_reward[self.done_envs] = 300.0
 
-        total_reward = object_goal_distance_reward + self.completion_reward
+        total_reward += self.completion_reward
 
         self.rew_buf[:] = total_reward
+
+        # Store current state for next iteration
+        self.prev_object_pos_xy = self.object_pos_xy.clone()
+        self.prev_flange_pos = self.flange_pos.clone()
     
 
     def is_done(self) -> None:
@@ -641,9 +820,13 @@ class PCDMovingObjectTaskMulti(RLTask):
 
 
     def visualize_pcd(self,
-                      tool_pcd_transformed,
-                      object_pcd_transformed,
+                      tool_pcd_transformed, cropped_tool_pcd,
                       tool_pos, tool_rot,
+                      imaginary_grasping_point,
+                      tool_tip_point,
+                      principal_axes,
+                      quaternions,
+                      object_pcd_transformed,
                       object_pos, object_rot,
                       goal_pos,
                       view_idx=0):                    
@@ -653,6 +836,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         obj_pos_np = object_pos[view_idx].cpu().numpy()
         obj_rot_np = object_rot[view_idx].cpu().numpy()
         
+        # Visualize full tool point cloud
         tool_transformed_pcd_np = tool_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
         tool_transformed_point_cloud = o3d.geometry.PointCloud()
         tool_transformed_point_cloud.points = o3d.utility.Vector3dVector(tool_transformed_pcd_np)
@@ -661,12 +845,45 @@ class PCDMovingObjectTaskMulti(RLTask):
         T_t[:3, 3] = tool_pos_np
         tool_coord = deepcopy(base_coord).transform(T_t)
 
-        tool_end_point = o3d.geometry.TriangleMesh().create_sphere(radius=0.01)
-        tool_end_point.paint_uniform_color([0, 0, 1])
-        # farthest_pt = tool_transformed_pcd_np[farthest_idx.detach().cpu().numpy()][view_idx]
-        # T_t_p = np.eye(4)
-        # T_t_p[:3, 3] = farthest_pt
-        # tool_tip_position = copy.deepcopy(tool_end_point).transform(T_t_p)
+        # Visualize grasping point
+        grasping_point_np = imaginary_grasping_point[view_idx].detach().cpu().numpy()
+        grasping_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.005)
+        grasping_sphere.paint_uniform_color([0, 1, 1])  # Cyan color for grasping point
+        grasping_sphere.translate(grasping_point_np)
+
+        # Visualize tool tip point
+        tool_tip_point_np = tool_tip_point[view_idx].detach().cpu().numpy()
+        tool_tip_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.005)
+        tool_tip_sphere.paint_uniform_color([0, 0, 1])  # Blue color for tool tip
+        tool_tip_sphere.translate(tool_tip_point_np)
+
+        # Visualize cropped point cloud
+        cropped_pcd_np = cropped_tool_pcd[view_idx].squeeze(0).detach().cpu().numpy()
+        cropped_point_cloud = o3d.geometry.PointCloud()
+        cropped_point_cloud.points = o3d.utility.Vector3dVector(cropped_pcd_np)
+
+        # Principal axis
+        principal_axis = principal_axes[view_idx, :, 0].cpu().numpy()
+        mean_point = cropped_pcd_np.mean(axis=0)
+        start_point = mean_point - principal_axis * 0.5
+        end_point = mean_point + principal_axis * 0.5
+        # Create line set for the principal axis
+        pca_line = o3d.geometry.LineSet()
+        pca_line.points = o3d.utility.Vector3dVector([start_point, end_point])
+        pca_line.lines = o3d.utility.Vector2iVector([[0, 1]])
+        pca_line.colors = o3d.utility.Vector3dVector([[1, 0, 0]])  # Yellow color for principal axis
+
+        # Quaternion to rotation matrix
+        quaternion = quaternions[view_idx].cpu().numpy()
+        rot_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(quaternion)
+        
+        # Create arrow for the principal axis
+        ori_arrow = o3d.geometry.TriangleMesh.create_arrow(cylinder_radius=0.005, cone_radius=0.01, cylinder_height=0.1, cone_height=0.02)
+        ori_arrow.paint_uniform_color([1, 0, 1])  # Magenta color for orientation arrow
+        T_arrow = np.eye(4)
+        T_arrow[:3, :3] = rot_matrix
+        ori_arrow.transform(T_arrow)
+        ori_arrow.translate(grasping_point_np)  # Translate the arrow to the grasping point
 
         obj_transformed_pcd_np = object_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
         obj_transformed_point_cloud = o3d.geometry.PointCloud()
@@ -695,12 +912,175 @@ class PCDMovingObjectTaskMulti(RLTask):
         # goal_position_xy = copy.deepcopy(goal_sphere).transform(T_g)
 
         o3d.visualization.draw_geometries([base_coord,
-                                        tool_transformed_point_cloud,
-                                        obj_transformed_point_cloud,
-                                        # tool_tip_position,
-                                        tool_coord,
-                                        obj_coord,
-                                        goal_position,
+                                           tool_transformed_point_cloud,
+                                           cropped_point_cloud,
+                                           obj_transformed_point_cloud,
+                                           tool_tip_sphere,
+                                           pca_line,
+                                           ori_arrow,
+                                           grasping_sphere,
+                                           tool_coord,
+                                           obj_coord,
+                                           goal_position,
                                         # goal_position_xy
                                         ],
                                             window_name=f'point cloud')
+    
+
+
+    def get_imaginary_grasping_point(self, flange_pos, flange_rot):
+        # Convert quaternion to rotation matrix
+        flange_rot_matrix = quaternion_to_matrix(flange_rot)
+
+        # Y-direction in the flange's coordinate system
+        y_direction = torch.tensor([0, 1, 0], device=flange_pos.device, dtype=flange_pos.dtype)
+        y_direction_flange = torch.matmul(flange_rot_matrix, y_direction)
+
+        # Imaginary grasping point, 0.16m away in the y-direction at Robotiq 2F-85
+        imaginary_grasping_point = flange_pos + 0.16 * y_direction_flange
+
+        return imaginary_grasping_point
+
+
+    def crop_tool_pcd(self, tool_pcd, grasping_point, radius=0.05):
+        """
+        Crop the tool point cloud around the imaginary grasping point using a spherical region.
+
+        Args:
+        - tool_pcd: Tensor of shape [num_envs, num_points, 3]
+        - grasping_point: Tensor of shape [num_envs, 3]
+        - radius: Float, radius of the sphere to crop around the grasping point
+
+        Returns:
+        - cropped_pcd: Tensor of cropped points with shape [num_envs, num_cropped_points, 3]
+        """
+        # Calculate the distance from each point to the grasping point
+        distances = torch.linalg.norm(tool_pcd - grasping_point.unsqueeze(1), dim=2)
+        mask = distances <= radius  # Create a mask to select points within the sphere
+        mask_int = mask.int()   # Convert mask to integer type for sorting
+
+        # Find the maximum number of points that meet the condition for each environment
+        max_cropped_points = mask_int.sum(dim=1).max().item()
+
+        # Use the mask to select points and maintain the shape [num_envs, num_cropped_points, 3]
+        sorted_idx = torch.argsort(mask_int, descending=True, dim=1)
+        sorted_idx = sorted_idx[:, :max_cropped_points]
+        cropped_pcd = torch.gather(tool_pcd, 1, sorted_idx.unsqueeze(-1).expand(-1, -1, 3))
+
+        return cropped_pcd
+
+
+    def apply_pca(self, cropped_pcd):
+        """
+        Apply PCA to the cropped point cloud to get the principal axis.
+
+        Args:
+        - cropped_pcd: Tensor of shape [num_envs, num_cropped_points, 3]
+
+        Returns:
+        - principal_axes: Tensor of shape [num_envs, 3]
+        """
+        num_envs, num_cropped_points, _ = cropped_pcd.shape
+
+        # Center the data
+        mean = torch.mean(cropped_pcd, dim=1, keepdim=True)
+        centered_data = cropped_pcd - mean
+
+        # # Reshape the data for batched SVD
+        # centered_data_flat = centered_data.view(num_envs, num_cropped_points, 3)
+        # U, S, V = torch.svd(centered_data_flat) # Perform batched SVD
+        # principal_axes = V[:, :, 0] # Extract the first principal component
+        # return principal_axes
+
+        # Perform PCA
+        _, _, V = torch.svd(centered_data)
+
+        return V
+
+    
+    def get_tool_tip_position(self, imaginary_grasping_point, tool_pcd):
+        B, N, _ = tool_pcd.shape
+        # calculate farthest distance and idx from the tool to the goal
+        diff = tool_pcd - imaginary_grasping_point[:, None, :]
+        distance = diff.norm(dim=2)  # [B, N]
+
+        # Find the index and value of the farthest point from the base coordinate
+        farthest_idx = distance.argmax(dim=1)  # [B]
+        # farthest_val = distance.gather(1, farthest_idx.unsqueeze(1)).squeeze(1)  # [B]
+        tool_end_point = tool_pcd.gather(1, farthest_idx.view(B, 1, 1).expand(B, 1, 3)).squeeze(1).squeeze(1)  # [B, 3]
+        
+        return tool_end_point
+
+
+
+    def find_intersection_with_yz_plane(self, flange_pos, flange_rot, principal_axis, grasping_point):
+        x_direction = torch.tensor([1, 0, 0], device=flange_pos.device, dtype=flange_pos.dtype)
+        x_direction_flange = torch.matmul(quaternion_to_matrix(flange_rot), x_direction)
+        t = torch.dot((flange_pos - grasping_point), x_direction_flange) / torch.dot(principal_axis, x_direction_flange)
+        intersection_point = grasping_point + t * principal_axis
+        return intersection_point
+
+    def calculate_tool_orientation(self, principal_axes, tool_tip_points, grasping_points):
+        """
+        Calculate the tool orientation based on the principal axes and the vector from grasping point to tool tip.
+
+        Args:
+        - principal_axes: Tensor of shape [num_envs, 3, 3]
+        - tool_tip_points: Tensor of shape [num_envs, 3]
+        - grasping_points: Tensor of shape [num_envs, 3]
+
+        Returns:
+        - quaternions: Tensor of shape [num_envs, 4]
+        """
+        # Use the first principal axis as the primary axis
+        primary_axes = principal_axes[:, :, 0]
+        opposite_axes = -principal_axes[:, :, 0]     
+
+        # Vector from grasping point to tool tip
+        vector_grasp_to_tip = tool_tip_points - grasping_points
+        vector_grasp_to_tip = F.normalize(vector_grasp_to_tip, dim=1)
+
+        # Calculate the dot product between the primary axis and the vector from grasping point to tool tip
+        dot_product_primary = torch.sum(primary_axes * vector_grasp_to_tip, dim=1)
+        dot_product_opposite = torch.sum(opposite_axes * vector_grasp_to_tip, dim=1)
+
+        selected_axes = torch.where(dot_product_primary.unsqueeze(1) > 0, primary_axes, opposite_axes)
+
+        # Calculate rotation from [0, 0, 1] to selected_axes
+        z_axis = torch.tensor([0.0, 0.0, 1.0], device=selected_axes.device).expand_as(selected_axes)
+        
+        # Compute the rotation axis
+        rotation_axis = torch.cross(z_axis, selected_axes, dim=1)
+        rotation_axis_norm = torch.norm(rotation_axis, dim=1, keepdim=True)
+        
+        # Handle the case where selected_axes is already [0, 0, 1] or [0, 0, -1]
+        rotation_axis = torch.where(rotation_axis_norm > 1e-6, rotation_axis / rotation_axis_norm, torch.tensor([1.0, 0.0, 0.0], device=selected_axes.device).expand_as(selected_axes))
+        
+        # Compute the rotation angle
+        cos_angle = torch.sum(z_axis * selected_axes, dim=1)
+        angle = torch.acos(torch.clamp(cos_angle, -1.0, 1.0))
+        
+        # Construct the quaternion
+        quaternions = torch.zeros((selected_axes.shape[0], 4), device=selected_axes.device)
+        quaternions[:, 0] = torch.cos(angle / 2)
+        quaternions[:, 1:] = rotation_axis * torch.sin(angle / 2).unsqueeze(1)
+        return quaternions
+
+
+    def rotation_matrix_from_vectors(self, vec1, vec2):
+        """ Find the rotation matrix that aligns vec1 to vec2
+        :param vec1: A 3d "source" vector
+        :param vec2: A 3d "destination" vector
+        :return mat: A transform matrix (3x3) which when applied to vec1, aligns it with vec2.
+        """
+        a, b = (vec1 / np.linalg.norm(vec1)).reshape(3), (vec2 / np.linalg.norm(vec2)).reshape(3)
+        v = np.cross(a, b)
+        c = np.dot(a, b)
+        s = np.linalg.norm(v)
+        kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+        rotation_matrix = np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2))
+        return rotation_matrix
+
+
+
+
