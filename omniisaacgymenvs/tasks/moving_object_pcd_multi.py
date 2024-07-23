@@ -568,8 +568,9 @@ class PCDMovingObjectTaskMulti(RLTask):
             imaginary_grasping_point = self.get_imaginary_grasping_point(self.flange_pos[local_abs_env_ids], self.flange_rot[local_abs_env_ids])
             cropped_tool_pcd = self.crop_tool_pcd(tool_pcd_transformed, imaginary_grasping_point)
             tool_tip_point = self.get_tool_tip_position(imaginary_grasping_point, tool_pcd_transformed)
-            principal_axes = self.apply_pca(cropped_tool_pcd)
+            principal_axes, cropped_pcd_mean = self.apply_pca(cropped_tool_pcd)
             quaternions = self.calculate_tool_orientation(principal_axes, tool_tip_point, imaginary_grasping_point)
+            real_grasping_point = self.get_real_grasping_point(self.flange_pos[local_abs_env_ids], self.flange_rot[local_abs_env_ids], principal_axes, cropped_pcd_mean)
 
             # if idx == 0:
             #     print(self.exp_dict[robot_name]['robot_view'].get_joint_positions(clone=False)[:, 6:])
@@ -577,90 +578,16 @@ class PCDMovingObjectTaskMulti(RLTask):
             # self.visualize_pcd(tool_pcd_transformed, cropped_tool_pcd,
             #                    tool_pos, tool_rot,
             #                    imaginary_grasping_point,
+            #                    real_grasping_point,
             #                    tool_tip_point,
             #                    principal_axes,
             #                    quaternions,
             #                    object_pcd_transformed,
             #                    object_pos, object_rot,
+            #                    self.flange_pos[local_abs_env_ids], self.flange_rot[local_abs_env_ids],
             #                    self.goal_pos[local_abs_env_ids],
             #                    view_idx=0)
 
-
-        
-        
-            '''
-            tool_pcd = tool_pcd_transformed
-            cropped_pcd = cropped_tool_pcd
-            grasping_point = imaginary_grasping_point
-            imaginary_grasping_points = imaginary_grasping_point
-            tool_tip_points = tool_tip_point
-            grasping_points = grasping_point
-
-            bbox_size = 0.1
-            radius=0.05
-
-            index = 1
-            base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
-
-            # Visualize cropped point cloud
-            cropped_pcd_np = cropped_tool_pcd[index].squeeze(0).detach().cpu().numpy()
-            cropped_point_cloud = o3d.geometry.PointCloud()
-            cropped_point_cloud.points = o3d.utility.Vector3dVector(cropped_pcd_np)
-
-            # Visualize full tool point cloud
-            tool_pcd_np = tool_pcd_transformed[index].squeeze(0).detach().cpu().numpy()
-            tool_point_cloud = o3d.geometry.PointCloud()
-            tool_point_cloud.points = o3d.utility.Vector3dVector(tool_pcd_np)
-
-            # Visualize tool tip point
-            tool_tip_point_np = tool_tip_point[index].detach().cpu().numpy()
-            tip_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.005)
-            tip_sphere.paint_uniform_color([0, 0, 1])  # Blue color for tool tip
-            tip_sphere.translate(tool_tip_point_np) 
-
-            # Principal axis
-            principal_axis = principal_axes[index, :, 0].cpu().numpy()
-            mean_point = cropped_pcd_np.mean(axis=0)
-            start_point = mean_point - principal_axis * 0.5
-            end_point = mean_point + principal_axis * 0.5
-
-            # Create line set for the principal axis
-            line_set = o3d.geometry.LineSet()
-            line_set.points = o3d.utility.Vector3dVector([start_point, end_point])
-            line_set.lines = o3d.utility.Vector2iVector([[0, 1]])
-            line_set.colors = o3d.utility.Vector3dVector([[1, 0, 0]])  # Yellow color for principal axis
-
-            # Quaternion to rotation matrix
-            quaternion = quaternions[index].cpu().numpy()
-            rot_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(quaternion)
-            
-            # Create arrow for the principal axis
-            arrow = o3d.geometry.TriangleMesh.create_arrow(cylinder_radius=0.005, cone_radius=0.01, cylinder_height=0.1, cone_height=0.02)
-            arrow.paint_uniform_color([1, 0, 1])  # Magenta color for orientation arrow
-            T_arrow = np.eye(4)
-            # T_arrow[:3, 3] = mean_point
-            T_arrow[:3, :3] = rot_matrix
-            arrow.transform(T_arrow)
-
-            # Visualize grasping point
-            grasping_point_np = imaginary_grasping_point[index].detach().cpu().numpy()
-            grasping_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.005)
-            grasping_sphere.paint_uniform_color([0, 1, 1])  # Cyan color for grasping point
-            grasping_sphere.translate(grasping_point_np)
-
-            # Translate the arrow to the grasping point
-            arrow.translate(grasping_point_np)
-
-            o3d.visualization.draw_geometries([base_coord,
-                                               tool_point_cloud,
-                                               cropped_point_cloud,
-                                               tip_sphere,
-                                               line_set,
-                                               arrow,
-                                               grasping_sphere
-                                               ],
-                                    window_name=f'point cloud')
-            '''
 
         
         self.object_pos_xyz = torch.mean(object_pcd_set, dim=1)
@@ -823,19 +750,43 @@ class PCDMovingObjectTaskMulti(RLTask):
                       tool_pcd_transformed, cropped_tool_pcd,
                       tool_pos, tool_rot,
                       imaginary_grasping_point,
+                      real_grasping_point,
                       tool_tip_point,
                       principal_axes,
                       quaternions,
                       object_pcd_transformed,
                       object_pos, object_rot,
+                      flange_pos, flange_rot,
                       goal_pos,
-                      view_idx=0):                    
+                      view_idx=0):
         base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
         tool_pos_np = tool_pos[view_idx].cpu().numpy()
         tool_rot_np = tool_rot[view_idx].cpu().numpy()
         obj_pos_np = object_pos[view_idx].cpu().numpy()
         obj_rot_np = object_rot[view_idx].cpu().numpy()
-        
+        flange_pos_np = flange_pos[view_idx].detach().cpu().numpy()
+        flange_rot_np = flange_rot[view_idx].detach().cpu().numpy()
+
+        # Create a square plane
+        flange_rot_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(flange_rot_np)
+        plane_normal = flange_rot_matrix[:, 0]  # x-axis of flange coordinate system
+        plane_center = flange_pos_np
+        # Create a square plane
+        plane_size = 0.2
+        plane_points = [
+            plane_center + plane_size * (flange_rot_matrix[:, 1] + flange_rot_matrix[:, 2]),
+            plane_center + plane_size * (flange_rot_matrix[:, 1] - flange_rot_matrix[:, 2]),
+            plane_center + plane_size * (-flange_rot_matrix[:, 1] - flange_rot_matrix[:, 2]),
+            plane_center + plane_size * (-flange_rot_matrix[:, 1] + flange_rot_matrix[:, 2])
+        ]
+        plane_lines = [[0, 1], [1, 2], [2, 3], [3, 0]]
+
+        yz_plane = o3d.geometry.LineSet(
+            points=o3d.utility.Vector3dVector(plane_points),
+            lines=o3d.utility.Vector2iVector(plane_lines)
+        )
+        yz_plane.paint_uniform_color([0.5, 0.5, 0])  # Yellow for yz-plane
+
         # Visualize full tool point cloud
         tool_transformed_pcd_np = tool_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
         tool_transformed_point_cloud = o3d.geometry.PointCloud()
@@ -846,10 +797,10 @@ class PCDMovingObjectTaskMulti(RLTask):
         tool_coord = deepcopy(base_coord).transform(T_t)
 
         # Visualize grasping point
-        grasping_point_np = imaginary_grasping_point[view_idx].detach().cpu().numpy()
-        grasping_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.005)
-        grasping_sphere.paint_uniform_color([0, 1, 1])  # Cyan color for grasping point
-        grasping_sphere.translate(grasping_point_np)
+        imaginary_grasping_point_np = imaginary_grasping_point[view_idx].detach().cpu().numpy()
+        imaginary_grasping_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.005)
+        imaginary_grasping_sphere.paint_uniform_color([0, 1, 1])  # Cyan color for grasping point
+        imaginary_grasping_sphere.translate(imaginary_grasping_point_np)
 
         # Visualize tool tip point
         tool_tip_point_np = tool_tip_point[view_idx].detach().cpu().numpy()
@@ -861,6 +812,12 @@ class PCDMovingObjectTaskMulti(RLTask):
         cropped_pcd_np = cropped_tool_pcd[view_idx].squeeze(0).detach().cpu().numpy()
         cropped_point_cloud = o3d.geometry.PointCloud()
         cropped_point_cloud.points = o3d.utility.Vector3dVector(cropped_pcd_np)
+
+        # Visualize real grasping point
+        real_grasping_point_np = real_grasping_point[view_idx].detach().cpu().numpy()
+        real_grasping_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.008)
+        real_grasping_sphere.paint_uniform_color([1, 0, 1])  # Magenta color for real grasping point
+        real_grasping_sphere.translate(real_grasping_point_np)
 
         # Principal axis
         principal_axis = principal_axes[view_idx, :, 0].cpu().numpy()
@@ -883,7 +840,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         T_arrow = np.eye(4)
         T_arrow[:3, :3] = rot_matrix
         ori_arrow.transform(T_arrow)
-        ori_arrow.translate(grasping_point_np)  # Translate the arrow to the grasping point
+        ori_arrow.translate(real_grasping_point_np)  # Translate the arrow to the grasping point
 
         obj_transformed_pcd_np = object_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
         obj_transformed_point_cloud = o3d.geometry.PointCloud()
@@ -918,10 +875,12 @@ class PCDMovingObjectTaskMulti(RLTask):
                                            tool_tip_sphere,
                                            pca_line,
                                            ori_arrow,
-                                           grasping_sphere,
+                                           imaginary_grasping_sphere,
+                                           real_grasping_sphere,
                                            tool_coord,
                                            obj_coord,
                                            goal_position,
+                                           yz_plane,
                                         # goal_position_xy
                                         ],
                                             window_name=f'point cloud')
@@ -995,7 +954,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         # Perform PCA
         _, _, V = torch.svd(centered_data)
 
-        return V
+        return V, mean
 
     
     def get_tool_tip_position(self, imaginary_grasping_point, tool_pcd):
@@ -1067,6 +1026,57 @@ class PCDMovingObjectTaskMulti(RLTask):
         return quaternions
 
 
+    def get_real_grasping_point(self, flange_pos, flange_rot, principal_axes, cropped_pcd_mean):
+        """
+        Calculate the real grasping point as the intersection of the yz-plane 
+        in the flange coordinate system and the line along the principal axis
+        that passes through the mean of the cropped point cloud.
+
+        Args:
+        - flange_pos: Tensor of shape [num_envs, 3] representing flange positions
+        - flange_rot: Tensor of shape [num_envs, 4] representing flange rotations as quaternions
+        - principal_axes: Tensor of shape [num_envs, 3, 3] representing the principal axes
+        - cropped_pcd_mean: Tensor of shape [num_envs, 1, 3] representing the mean of cropped point clouds
+
+        Returns:
+        - real_grasping_point: Tensor of shape [num_envs, 3] representing the real grasping points
+        """
+        # Convert flange rotation quaternion to rotation matrix
+        flange_rot_matrix = quaternion_to_matrix(flange_rot)
+
+        # Get the x-axis of the flange coordinate system
+        flange_x_axis = flange_rot_matrix[:, :, 0]
+
+        # Use the first principal axis
+        principal_axis = principal_axes[:, :, 0]
+
+        # Remove the extra dimension from cropped_pcd_mean
+        cropped_pcd_mean = cropped_pcd_mean.squeeze(1)
+
+        # Calculate the parameter t
+        # The plane equation is: (p - flange_pos) · flange_x_axis = 0
+        # The line equation is: p = cropped_pcd_mean + t * principal_axis
+        # Substituting the line equation into the plane equation:
+        # ((cropped_pcd_mean + t * principal_axis) - flange_pos) · flange_x_axis = 0
+        # Solving for t: t = ((flange_pos - cropped_pcd_mean) · flange_x_axis) / (principal_axis · flange_x_axis)
+        
+        numerator = torch.sum((flange_pos - cropped_pcd_mean) * flange_x_axis, dim=1)
+        denominator = torch.sum(principal_axis * flange_x_axis, dim=1)
+        
+        # Handle cases where the principal axis is parallel to the yz-plane
+        t = torch.where(
+            torch.abs(denominator) > 1e-6,
+            numerator / denominator,
+            torch.zeros_like(numerator)
+        )
+
+        # Calculate the intersection point
+        real_grasping_point = cropped_pcd_mean + t.unsqueeze(1) * principal_axis
+
+        return real_grasping_point
+
+
+    # Helper function to calculate rotation matrix from two vectors
     def rotation_matrix_from_vectors(self, vec1, vec2):
         """ Find the rotation matrix that aligns vec1 to vec2
         :param vec1: A 3d "source" vector
@@ -1078,9 +1088,5 @@ class PCDMovingObjectTaskMulti(RLTask):
         c = np.dot(a, b)
         s = np.linalg.norm(v)
         kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
-        rotation_matrix = np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2))
+        rotation_matrix = np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2 + 1e-10))
         return rotation_matrix
-
-
-
-
