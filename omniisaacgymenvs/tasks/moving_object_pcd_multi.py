@@ -55,7 +55,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.update_config(sim_config)
 
         self.step_num = 0
-        self.dt = 1 / 120.0
+        self.dt = self._sim_cfg['dt']
         self._env = env
 
         self.robot_list = ['ur5e_fork', 'ur5e_hammer', 'ur5e_ladle', 'ur5e_roller',
@@ -99,16 +99,19 @@ class PCDMovingObjectTaskMulti(RLTask):
         # observation and action space
         pcd_observations = self._pcd_sampling_num * 2 * 3   # TODO: 환경 개수 * 로봇 대수 인데 이게 맞는지 확인 필요
         # 2 is a number of point cloud masks(tool and object) and 3 is a cartesian coordinate
-        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 2 + 2
+        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 2 + 2 + 3 + 4
         '''
         refer to observations in get_observations()
-        pcd_observations                              # [NE, 3*2*pcd_sampling_num]
+        tools_pcd_flattened                           # [NE, 3*pcd_sampling_num]
+        objects_pcd_flattened                         # [NE, 3*pcd_sampling_num]
         dof_pos_scaled,                               # [NE, 6]
         dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
         flange_pos,                                   # [NE, 3]
         flange_rot,                                   # [NE, 4]
         goal_pos_xy,                                  # [NE, 2]
         object_to_goal_vector_norm                    # [NE, 2]
+        grasping_points                               # [NE, 3]
+        approx_tool_rots                              # [NE, 4]
         
         '''
 
@@ -176,6 +179,9 @@ class PCDMovingObjectTaskMulti(RLTask):
         self._sim_config = sim_config
         self._cfg = sim_config.config
         self._task_cfg = sim_config.task_config
+        self._sim_cfg = sim_config.sim_params
+
+        self._base_coord = self._task_cfg["env"]["baseFrame"]
 
         self._num_envs = self._task_cfg["env"]["numEnvs"]
         self._env_spacing = self._task_cfg["env"]["envSpacing"]
@@ -251,6 +257,9 @@ class PCDMovingObjectTaskMulti(RLTask):
 
         self.flange_pos = torch.zeros((self._num_envs*self.robot_num, 3), device=self._device)
         self.flange_rot = torch.zeros((self._num_envs*self.robot_num, 4), device=self._device)
+
+        self.robot_part_pos = torch.zeros((self._num_envs*self.robot_num, 3), device=self._device)
+        self.robot_part_rot = torch.zeros((self._num_envs*self.robot_num, 4), device=self._device)
 
         # self.tool_6d_pos = torch.zeros((self._num_envs*self.robot_num, 5), device=self._device)
 
@@ -506,21 +515,30 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.goal_pos = torch.empty(self._num_envs*self.robot_num, 3).to(device=self._device)  # save goal position for getting xy position
         robots_dof_pos = torch.empty(self._num_envs*self.robot_num, 6).to(device=self._device)
         robots_dof_vel = torch.empty(self._num_envs*self.robot_num, 6).to(device=self._device)
+        approx_tool_rots = torch.empty(self._num_envs*self.robot_num, 4).to(device=self._device)
+        grasping_points = torch.empty(self._num_envs*self.robot_num, 3).to(device=self._device)
 
         for idx, robot_name in enumerate(self.robot_list):
             local_abs_env_ids = self.local_env_ids*self.robot_num + idx
             robot_flanges = self.exp_dict[robot_name]['robot_view']._flanges
-            self.flange_pos[local_abs_env_ids], self.flange_rot[local_abs_env_ids] = robot_flanges.get_local_poses()
+            if self._base_coord == 'flange':
+                flange_pos = torch.zeros_like(robot_flanges.get_local_poses()[0])
+                flange_rot = torch.tensor([1.0, 0.0, 0.0, 0.0], device=flange_pos.device).expand(flange_pos.shape[0], 4)
+            else:
+                self.flange_pos[local_abs_env_ids], self.flange_rot[local_abs_env_ids] = robot_flanges.get_local_poses()
             object_pos, object_rot_quaternion = self.exp_dict[robot_name]['object_view'].get_local_poses()
             
             # local object pose values are indicate with the environment ids with regard to the robot set
             x = (idx // self.num_cols) * self._sub_spacing
             y = (idx % self.num_cols) * self._sub_spacing
             object_pos[:, :2] -= torch.tensor([x, y], device=self._device)
-            
             object_rot = quaternion_to_matrix(object_rot_quaternion)
             tool_pos, tool_rot_quaternion = self.exp_dict[robot_name]['robot_view']._tools.get_local_poses()
             tool_rot = quaternion_to_matrix(tool_rot_quaternion)
+
+            if self._base_coord == 'flange':
+                # TODO: self.flange_pos[local_abs_env_ids] 부분을 base 기준으로 넣어야 할지, self._base_coord를 기준으로 넣어야 할지 확인해서 바꿔야 함.
+                ee_transform = self.create_ee_transform(self.flange_pos[local_abs_env_ids], self.flange_rot[local_abs_env_ids])
 
             # concat tool point cloud
             tool_pcd_transformed = pcd_registration(self.exp_dict[robot_name]['tool_pcd'],
@@ -528,24 +546,9 @@ class PCDMovingObjectTaskMulti(RLTask):
                                                     tool_rot,
                                                     self.num_envs,
                                                     device=self._device)
+            tool_pcd_transformed = self.transform_points(tool_pcd_transformed, ee_transform) if self._base_coord == 'flange' else tool_pcd_transformed
             tool_pcd_flattend = tool_pcd_transformed.contiguous().view(self._num_envs, -1)
             tools_pcd_flattened[local_abs_env_ids] = tool_pcd_flattend
-
-
-            '''
-            # calculate farthest distance and idx from the tool to the goal
-            diff = tool_pcd_transformed - self.flange_pos[:, None, :]
-            distance = diff.norm(dim=2)  # [B, N]
-
-            # Find the index and value of the farthest point from the base coordinate
-            farthest_idx = distance.argmax(dim=1)  # [B]
-            # farthest_val = distance.gather(1, farthest_idx.unsqueeze(1)).squeeze(1)  # [B]
-            self.tool_end_point = tool_pcd_transformed.gather(1, farthest_idx.view(B, 1, 1).expand(B, 1, 3)).squeeze(1).squeeze(1)  # [B, 3]
-            
-            '''
-
-
-
 
             # concat object point cloud
             object_pcd_transformed = pcd_registration(self.exp_dict[robot_name]['object_pcd'],
@@ -553,43 +556,51 @@ class PCDMovingObjectTaskMulti(RLTask):
                                                       object_rot,
                                                       self.num_envs,
                                                       device=self._device)
+            object_pcd_transformed = self.transform_points(object_pcd_transformed, ee_transform) if self._base_coord == 'flange' else object_pcd_transformed
             object_pcd_set[local_abs_env_ids] = object_pcd_transformed  # for calculating xyz position
             object_pcd_flattend = object_pcd_transformed.contiguous().view(self._num_envs, -1)
             objects_pcd_flattened[local_abs_env_ids] = object_pcd_flattend
 
             local_goal_pos = self.exp_dict[robot_name]['goal_view'].get_local_poses()[0]
             local_goal_pos[:, :2] -= torch.tensor([x, y], device=self._device)  # revise the goal pos
-            self.goal_pos[local_abs_env_ids] = local_goal_pos
+            self.goal_pos[local_abs_env_ids] = self.transform_points(local_goal_pos.unsqueeze(1), ee_transform).squeeze(1) if self._base_coord == 'flange' else local_goal_pos
 
             # get robot dof position and velocity from 1st to 6th joint
             robots_dof_pos[local_abs_env_ids] = self.exp_dict[robot_name]['robot_view'].get_joint_positions(clone=False)[:, 0:6]
             robots_dof_vel[local_abs_env_ids] = self.exp_dict[robot_name]['robot_view'].get_joint_velocities(clone=False)[:, 0:6]
             
+            # Calculate tool's grasping point and orientation from transformed PCD using PCA and predefined positions/rotations
             imaginary_grasping_point = self.get_imaginary_grasping_point(self.flange_pos[local_abs_env_ids], self.flange_rot[local_abs_env_ids])
             cropped_tool_pcd = self.crop_tool_pcd(tool_pcd_transformed, imaginary_grasping_point)
             tool_tip_point = self.get_tool_tip_position(imaginary_grasping_point, tool_pcd_transformed)
             principal_axes, cropped_pcd_mean = self.apply_pca(cropped_tool_pcd)
-            quaternions = self.calculate_tool_orientation(principal_axes, tool_tip_point, imaginary_grasping_point)
             real_grasping_point = self.get_real_grasping_point(self.flange_pos[local_abs_env_ids], self.flange_rot[local_abs_env_ids], principal_axes, cropped_pcd_mean)
+            approx_tool_rot = self.calculate_tool_orientation(principal_axes, tool_tip_point, imaginary_grasping_point)
+            
+            real_grasping_point, approx_tool_rot = self.transform_pose(real_grasping_point, approx_tool_rot, ee_transform) if self._base_coord == 'flange' else (real_grasping_point, approx_tool_rot)
+            grasping_points[local_abs_env_ids] = real_grasping_point
+            approx_tool_rots[local_abs_env_ids] = approx_tool_rot
 
-            # if idx == 0:
-            #     print(self.exp_dict[robot_name]['robot_view'].get_joint_positions(clone=False)[:, 6:])
-        
             # self.visualize_pcd(tool_pcd_transformed, cropped_tool_pcd,
             #                    tool_pos, tool_rot,
             #                    imaginary_grasping_point,
             #                    real_grasping_point,
             #                    tool_tip_point,
             #                    principal_axes,
-            #                    quaternions,
+            #                    approx_tool_rot,
             #                    object_pcd_transformed,
             #                    object_pos, object_rot,
             #                    self.flange_pos[local_abs_env_ids], self.flange_rot[local_abs_env_ids],
             #                    self.goal_pos[local_abs_env_ids],
+            #                    self._base_coord,
             #                    view_idx=0)
 
+        if self._base_coord == 'flange':
+            robot_part_position, robot_part_orientation = self.get_base_in_flange_frame(self.flange_pos[local_abs_env_ids], self.flange_rot[local_abs_env_ids])
+        else:
+            robot_part_position = self.flange_pos
+            robot_part_orientation = self.flange_rot
 
-        
         self.object_pos_xyz = torch.mean(object_pcd_set, dim=1)
         self.object_pos_xy = self.object_pos_xyz[:, [0, 1]]
 
@@ -619,9 +630,11 @@ class PCDMovingObjectTaskMulti(RLTask):
         2. object object point cloud (flattened)
         3. robot dof position
         4. robot dof velocity
-        5. flange position
-        6. flange orientation
+        5. robot part position
+        6. robot part orientation
         7. goal position
+        8. grasping_point
+        9. tool_orientation
         '''
 
         '''the number of evironments; NE = self._num_envs * self.robot_num'''
@@ -631,10 +644,12 @@ class PCDMovingObjectTaskMulti(RLTask):
                                   dof_pos_scaled,                                               # [NE, 6]
                                 #   dof_vel_scaled[:, :6] * generalization_noise, # [NE, 6]
                                   dof_vel_scaled,                                               # [NE, 6]
-                                  self.flange_pos,                                              # [NE, 3]
-                                  self.flange_rot,                                              # [NE, 4]
+                                  robot_part_position,                                          # [NE, 3]
+                                  robot_part_orientation,                                       # [NE, 4]
                                   self.goal_pos_xy,                                             # [NE, 2]
-                                  object_to_goal_unit_vec,                                      # [NE, 2]    
+                                  object_to_goal_unit_vec,                                      # [NE, 2]
+                                  grasping_points,                                              # [NE, 3]
+                                  approx_tool_rots                                              # [NE, 4]
                                  ), dim=1)
 
         if self._control_space == "cartesian":
@@ -753,19 +768,34 @@ class PCDMovingObjectTaskMulti(RLTask):
                       real_grasping_point,
                       tool_tip_point,
                       principal_axes,
-                      quaternions,
+                      approx_tool_rot,
                       object_pcd_transformed,
                       object_pos, object_rot,
                       flange_pos, flange_rot,
                       goal_pos,
+                      base_coord='flange',  # robot_base or flange
                       view_idx=0):
-        base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
+        
+        if base_coord == 'flange':
+            base_coord = self.get_base_in_flange_frame(flange_pos, flange_rot)
+            flange_pos = torch.zeros_like(flange_pos)
+            flange_rot = torch.tensor([1.0, 0.0, 0.0, 0.0], device=flange_pos.device).expand(flange_pos.shape[0], 4)
+        else:
+            base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
+
         tool_pos_np = tool_pos[view_idx].cpu().numpy()
         tool_rot_np = tool_rot[view_idx].cpu().numpy()
         obj_pos_np = object_pos[view_idx].cpu().numpy()
         obj_rot_np = object_rot[view_idx].cpu().numpy()
         flange_pos_np = flange_pos[view_idx].detach().cpu().numpy()
         flange_rot_np = flange_rot[view_idx].detach().cpu().numpy()
+
+        # Visualize flange coordination
+        flange_rot_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(flange_rot_np)
+        T_flange = np.eye(4)
+        T_flange[:3, :3] = flange_rot_matrix
+        T_flange[:3, 3] = flange_pos_np
+        flange_coord = deepcopy(base_coord).transform(T_flange)
 
         # Create a square plane
         flange_rot_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(flange_rot_np)
@@ -786,6 +816,8 @@ class PCDMovingObjectTaskMulti(RLTask):
             lines=o3d.utility.Vector2iVector(plane_lines)
         )
         yz_plane.paint_uniform_color([0.5, 0.5, 0])  # Yellow for yz-plane
+
+
 
         # Visualize full tool point cloud
         tool_transformed_pcd_np = tool_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
@@ -831,8 +863,8 @@ class PCDMovingObjectTaskMulti(RLTask):
         pca_line.colors = o3d.utility.Vector3dVector([[1, 0, 0]])  # Yellow color for principal axis
 
         # Quaternion to rotation matrix
-        quaternion = quaternions[view_idx].cpu().numpy()
-        rot_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(quaternion)
+        approx_tool_rot_np = approx_tool_rot[view_idx].cpu().numpy()
+        rot_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(approx_tool_rot_np)
         
         # Create arrow for the principal axis
         ori_arrow = o3d.geometry.TriangleMesh.create_arrow(cylinder_radius=0.005, cone_radius=0.01, cylinder_height=0.1, cone_height=0.02)
@@ -871,14 +903,15 @@ class PCDMovingObjectTaskMulti(RLTask):
         o3d.visualization.draw_geometries([base_coord,
                                            tool_transformed_point_cloud,
                                            cropped_point_cloud,
-                                           obj_transformed_point_cloud,
+                                           tool_coord,
+                                           imaginary_grasping_sphere,
+                                           real_grasping_sphere,
                                            tool_tip_sphere,
                                            pca_line,
                                            ori_arrow,
-                                           imaginary_grasping_sphere,
-                                           real_grasping_sphere,
-                                           tool_coord,
+                                           obj_transformed_point_cloud,                                        
                                            obj_coord,
+                                           flange_coord,
                                            goal_position,
                                            yz_plane,
                                         # goal_position_xy
@@ -989,7 +1022,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         - grasping_points: Tensor of shape [num_envs, 3]
 
         Returns:
-        - quaternions: Tensor of shape [num_envs, 4]
+        - approx_tool_rot: Tensor of shape [num_envs, 4]
         """
         # Use the first principal axis as the primary axis
         primary_axes = principal_axes[:, :, 0]
@@ -1020,10 +1053,10 @@ class PCDMovingObjectTaskMulti(RLTask):
         angle = torch.acos(torch.clamp(cos_angle, -1.0, 1.0))
         
         # Construct the quaternion
-        quaternions = torch.zeros((selected_axes.shape[0], 4), device=selected_axes.device)
-        quaternions[:, 0] = torch.cos(angle / 2)
-        quaternions[:, 1:] = rotation_axis * torch.sin(angle / 2).unsqueeze(1)
-        return quaternions
+        approx_tool_rot = torch.zeros((selected_axes.shape[0], 4), device=selected_axes.device)
+        approx_tool_rot[:, 0] = torch.cos(angle / 2)
+        approx_tool_rot[:, 1:] = rotation_axis * torch.sin(angle / 2).unsqueeze(1)
+        return approx_tool_rot
 
 
     def get_real_grasping_point(self, flange_pos, flange_rot, principal_axes, cropped_pcd_mean):
@@ -1075,6 +1108,94 @@ class PCDMovingObjectTaskMulti(RLTask):
 
         return real_grasping_point
 
+
+    def create_ee_transform(self, flange_pos, flange_rot):
+        """
+        Create a transformation matrix from the robot base frame to the grasping point frame.
+        
+        Args:
+        - grasping_point: Tensor of shape [num_envs, 3] representing the grasping point positions
+        - tool_orientation: Tensor of shape [num_envs, 4] representing the tool orientations as quaternions
+        
+        Returns:
+        - transform: Tensor of shape [num_envs, 4, 4] representing the transformation matrices
+        """
+        num_envs = flange_pos.shape[0]
+        transform = torch.eye(4, device=flange_pos.device).unsqueeze(0).repeat(num_envs, 1, 1)
+        
+        transform[:, :3, 3] = flange_pos    # Set the translation part of the transform        
+        transform[:, :3, :3] = quaternion_to_matrix(flange_rot) # Set the rotation part of the transform
+
+        return transform
+    
+    
+    def transform_points(self, points, transform):
+        """
+        Apply transformation to points.
+        
+        Args:
+        - points: Tensor of shape [num_envs, num_points, 3]
+        - transform: Tensor of shape [num_envs, 4, 4]
+        
+        Returns:
+        - transformed_points: Tensor of shape [num_envs, num_points, 3]
+        """
+        num_envs, num_points, _ = points.shape
+        # Homogeneous coordinates
+        points_homogeneous = torch.cat([points, torch.ones(num_envs, num_points, 1, device=points.device)], dim=-1)
+        
+        # Apply transformation
+        transformed_points = torch.bmm(points_homogeneous, transform.transpose(1, 2))
+        
+        return transformed_points[:, :, :3]
+    
+
+    def transform_pose(self, position, orientation, transform):
+        """
+        Apply transformation to a pose (position and orientation).
+        
+        Args:
+        - position: Tensor of shape [num_envs, 3] (x, y, z)
+        - orientation: Tensor of shape [num_envs, 4] (qw, qx, qy, qz)
+        - transform: Tensor of shape [num_envs, 4, 4]
+        
+        Returns:
+        - transformed_pose: Tensor of shape [num_envs, 7]
+        """
+        # position = pose[:, :3]
+        # orientation = pose[:, 3:]
+        
+        # Transform position
+        transformed_position = self.transform_points(position.unsqueeze(1), transform).squeeze(1)
+
+        # Transform orientation
+        original_rot = quaternion_to_matrix(orientation)
+        transformed_rot = torch.bmm(transform[:, :3, :3], original_rot)
+        transformed_orientation = matrix_to_quaternion(transformed_rot)
+
+        return transformed_position, transformed_orientation
+        
+    def get_base_in_flange_frame(self, flange_pos, flange_rot):
+        """
+        Calculate the base coordinate in the flange frame.
+        
+        Args:
+        - flange_pos: Tensor of shape [num_envs, 3] representing flange positions in base frame
+        - flange_rot: Tensor of shape [num_envs, 4] representing flange orientations as quaternions in base frame
+        
+        Returns:
+        - base_pose: Tensor of shape [num_envs, 7] representing base pose (position + orientation) in flange frame
+        """
+        # Position of base in flange frame
+        base_pos_in_flange = -flange_pos
+
+        # Orientation of base in flange frame
+        flange_rot_matrix = quaternion_to_matrix(flange_rot)
+        base_rot_in_flange = flange_rot_matrix.transpose(1, 2)
+        base_quat_in_flange = matrix_to_quaternion(base_rot_in_flange)
+
+        return base_pos_in_flange, base_quat_in_flange
+    
 
     # Helper function to calculate rotation matrix from two vectors
     def rotation_matrix_from_vectors(self, vec1, vec2):
