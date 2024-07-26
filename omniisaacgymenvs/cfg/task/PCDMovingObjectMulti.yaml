@@ -5,9 +5,8 @@ physics_engine: ${..physics_engine}
 
 # if given, will override the device setting in gym. 
 env:
-  # numEnvs: ${resolve_default:4096,${...num_envs}}
-  # numEnvs: ${resolve_default:2048,${...num_envs}}
-  numEnvs: ${resolve_default:4,${...num_envs}}
+  # numEnvs: ${resolve_default:290,${...num_envs}}
+  numEnvs: ${resolve_default:3,${...num_envs}}
   envSpacing: 8.0
   subSpacing: 2.0
   episodeLength: 300
@@ -26,6 +25,8 @@ env:
   aggregateMode: 3  # 안 쓰는데 왜 있는건지?
 
   controlSpace: "cartesian"
+  baseFrame: "flange" # robot_base, flange
+
   goal: [0.55, 0.4, 0.1]
   # goal: [0.35, -0.0, 0.25]
   # goal: [0.9, 0.4, 0.1]
@@ -56,7 +57,7 @@ env:
   cameraType: "depth"
 
 sim:
-  dt: 0.0083 # 1/120 s
+  dt: 0.00833333 # 1/120 s
   use_gpu_pipeline: ${eq:${...pipeline},"gpu"}
   gravity: [0.0, 0.0, -9.81]
   add_ground_plane: True
