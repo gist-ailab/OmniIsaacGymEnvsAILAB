@@ -593,53 +593,53 @@ class PCDMovingObjectTaskMulti(RLTask):
             approx_tool_rots[local_abs_env_ids] = approx_tool_rot
 
 
-            # visualize the point cloud
-            if self._base_coord == 'flange':
-                cropped_tool_pcd = self.transform_points(cropped_tool_pcd, ee_transform)
-                tool_pos, tool_rot_quaternion = self.transform_pose(tool_pos, tool_rot_quaternion, ee_transform)
-                tool_rot = quaternion_to_matrix(tool_rot_quaternion)
+            # # visualize the point cloud
+            # if self._base_coord == 'flange':
+            #     cropped_tool_pcd = self.transform_points(cropped_tool_pcd, ee_transform)
+            #     tool_pos, tool_rot_quaternion = self.transform_pose(tool_pos, tool_rot_quaternion, ee_transform)
+            #     tool_rot = quaternion_to_matrix(tool_rot_quaternion)
 
-                imaginary_grasping_point = self.transform_points(imaginary_grasping_point.unsqueeze(1), ee_transform).squeeze(1)
-                tool_tip_point = self.transform_points(tool_tip_point.unsqueeze(1), ee_transform).squeeze(1)
-                object_pos, object_rot_quaternion = self.transform_pose(object_pos, object_rot_quaternion, ee_transform)
-                object_rot = quaternion_to_matrix(object_rot_quaternion)
-                first_principal_axes = self.transform_principal_axis(ee_transform, first_principal_axes)
-                base_pos, base_rot = self.get_base_in_flange_frame(self.abs_flange_pos[local_abs_env_ids], self.abs_flange_rot[local_abs_env_ids])
-            else:
-                base_pos = torch.tensor([0.0, 0.0, 0.0], device=self._device).expand(self.num_envs, 3)
-                base_rot = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device).expand(self.num_envs, 4)
+            #     imaginary_grasping_point = self.transform_points(imaginary_grasping_point.unsqueeze(1), ee_transform).squeeze(1)
+            #     tool_tip_point = self.transform_points(tool_tip_point.unsqueeze(1), ee_transform).squeeze(1)
+            #     object_pos, object_rot_quaternion = self.transform_pose(object_pos, object_rot_quaternion, ee_transform)
+            #     object_rot = quaternion_to_matrix(object_rot_quaternion)
+            #     first_principal_axes = self.transform_principal_axis(ee_transform, first_principal_axes)
+            #     base_pos, base_rot = self.get_base_in_flange_frame(self.abs_flange_pos[local_abs_env_ids], self.abs_flange_rot[local_abs_env_ids])
+            # else:
+            #     base_pos = torch.tensor([0.0, 0.0, 0.0], device=self._device).expand(self.num_envs, 3)
+            #     base_rot = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device).expand(self.num_envs, 4)
 
             
-            '''
-            view_idx = 0
-            base_coord = 'flange'
-            flange_pos_np = flange_pos[local_abs_env_ids][0].detach().cpu().numpy()
-            flange_rot_np = flange_rot[local_abs_env_ids][0].detach().cpu().numpy()
-            tool_pos_np = tool_pos[view_idx].cpu().numpy()
-            tool_rot_np = tool_rot[view_idx].cpu().numpy()
-            base_pos_np = base_pos[view_idx].cpu().numpy()
-            base_rot_np = base_rot[view_idx].cpu().numpy()
-            obj_pos_np = object_pos[view_idx].cpu().numpy()
-            obj_rot_np = object_rot[view_idx].cpu().numpy()
-            # 지금 변환된 pcd랑 좌표계랑 안 맞음
+            # '''
+            # view_idx = 0
+            # base_coord = 'flange'
+            # flange_pos_np = flange_pos[local_abs_env_ids][0].detach().cpu().numpy()
+            # flange_rot_np = flange_rot[local_abs_env_ids][0].detach().cpu().numpy()
+            # tool_pos_np = tool_pos[view_idx].cpu().numpy()
+            # tool_rot_np = tool_rot[view_idx].cpu().numpy()
+            # base_pos_np = base_pos[view_idx].cpu().numpy()
+            # base_rot_np = base_rot[view_idx].cpu().numpy()
+            # obj_pos_np = object_pos[view_idx].cpu().numpy()
+            # obj_rot_np = object_rot[view_idx].cpu().numpy()
+            # # 지금 변환된 pcd랑 좌표계랑 안 맞음
             
-            '''
+            # '''
 
-            self.visualize_pcd(tool_pcd_transformed, cropped_tool_pcd,
-                               tool_pos, tool_rot,
-                               imaginary_grasping_point,
-                               real_grasping_point,
-                               tool_tip_point,
-                               first_principal_axes,
-                               approx_tool_rot,
-                               object_pcd_transformed,
-                               base_pos, base_rot,
-                               object_pos, object_rot,
-                               flange_pos[local_abs_env_ids], flange_rot[local_abs_env_ids],
-                               goal_pos[local_abs_env_ids],
-                               self._base_coord,
-                               view_idx=0)
-            # visualize the point cloud
+            # self.visualize_pcd(tool_pcd_transformed, cropped_tool_pcd,
+            #                    tool_pos, tool_rot,
+            #                    imaginary_grasping_point,
+            #                    real_grasping_point,
+            #                    tool_tip_point,
+            #                    first_principal_axes,
+            #                    approx_tool_rot,
+            #                    object_pcd_transformed,
+            #                    base_pos, base_rot,
+            #                    object_pos, object_rot,
+            #                    flange_pos[local_abs_env_ids], flange_rot[local_abs_env_ids],
+            #                    goal_pos[local_abs_env_ids],
+            #                    self._base_coord,
+            #                    view_idx=0)
+            # # visualize the point cloud
 
 
         if self._base_coord == 'flange':
@@ -830,9 +830,10 @@ class PCDMovingObjectTaskMulti(RLTask):
         flange_pos_np = flange_pos[view_idx].detach().cpu().numpy()
         flange_rot_np = flange_rot[view_idx].detach().cpu().numpy()
 
+        world_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
 
         if base_coord == 'flange':
-            flange_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.5, origin=np.array([0.0, 0.0, 0.0]))
+            flange_coord = world_coord
             base_coord = o3d.geometry.TriangleMesh().create_coordinate_frame(size=0.15, origin=np.array([0.0, 0.0, 0.0]))
             # Visualize base coordination
             base_rot_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(base_rot_np)
@@ -871,9 +872,6 @@ class PCDMovingObjectTaskMulti(RLTask):
             lines=o3d.utility.Vector2iVector(plane_lines)
         )
         yz_plane.paint_uniform_color([0.5, 0.5, 0])  # Yellow for yz-plane
-
-
-
         # Visualize full tool point cloud
         tool_transformed_pcd_np = tool_pcd_transformed[view_idx].squeeze(0).detach().cpu().numpy()
         tool_transformed_point_cloud = o3d.geometry.PointCloud()
@@ -881,7 +879,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         T_t = np.eye(4)
         T_t[:3, :3] = tool_rot_np
         T_t[:3, 3] = tool_pos_np
-        tool_coord = deepcopy(base_coord).transform(T_t)
+        tool_coord = deepcopy(world_coord).transform(T_t)
 
         # Visualize grasping point
         imaginary_grasping_point_np = imaginary_grasping_point[view_idx].detach().cpu().numpy()
@@ -938,7 +936,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         T_o[:3, :3] = obj_rot_np
         # T_o[:3, :3] = R_b
         T_o[:3, 3] = obj_pos_np
-        obj_coord = deepcopy(base_coord).transform(T_o)
+        obj_coord = deepcopy(world_coord).transform(T_o)
 
         goal_pos_np = goal_pos[view_idx].cpu().numpy()
         goal_cone = o3d.geometry.TriangleMesh.create_cone(radius=0.01, height=0.03)
@@ -1226,6 +1224,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         
         # Transform position
         transformed_position = self.transform_points(position.unsqueeze(1), transform).squeeze(1)
+        # transformed_position = -torch.bmm(transform[:, :3, :3], position.unsqueeze(2)).squeeze(2)
 
         # Transform orientation
         original_rot = quaternion_to_matrix(orientation)
