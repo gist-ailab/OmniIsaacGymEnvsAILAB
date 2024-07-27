@@ -536,7 +536,7 @@ class PCDMovingObjectTaskMulti(RLTask):
             tool_rot = quaternion_to_matrix(tool_rot_quaternion)
 
             if self._base_coord == 'flange':
-                ee_transform = self.create_ee_transform(abs_flange_pos, abs_flange_rot)
+                ee_transform = create_ee_transform(abs_flange_pos, abs_flange_rot)
 
             # concat tool point cloud
             tool_pcd_transformed = pcd_registration(self.exp_dict[robot_name]['tool_pcd'],
