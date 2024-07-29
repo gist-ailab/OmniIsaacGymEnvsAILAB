@@ -59,9 +59,11 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.dt = self._sim_cfg['dt']
         self._env = env
 
-        self.robot_list = ['ur5e_fork', 'ur5e_hammer', 'ur5e_ladle', 'ur5e_roller',
-                           'ur5e_spanner', 'ur5e_spatular', 'ur5e_spoon']
-        # self.robot_list = ['ur5e_spatular']
+        # self.robot_list = ['ur5e_fork', 'ur5e_hammer', 'ur5e_ladle', 'ur5e_roller',
+        #                    'ur5e_spanner', 'ur5e_spatular', 'ur5e_spoon']
+        self.robot_list = ['ur5e_fork', 'ur5e_hammer', 'ur5e_ladle',
+                           'ur5e_spatular', 'ur5e_spoon']
+        # self.robot_list = ['ur5e_spatular', 'ur5e_spoon']
         self.robot_num = len(self.robot_list)
         self.total_env_num = self._num_envs * self.robot_num
         
@@ -84,7 +86,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         # workspace 2D boundary
         self.x_min, self.x_max = (0.2, 0.8)
         self.y_min, self.y_max = (-0.8, 0.8)
-        self.z_min, self.z_max = (0.5, 0.7)
+        self.z_min, self.z_max = (0.2, 0.7)
         
         # object min-max range
         self.obj_x_min, self.obj_x_max = (0.25, 0.7)    
@@ -100,7 +102,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         # observation and action space
         pcd_observations = self._pcd_sampling_num * 2 * 3   # TODO: 환경 개수 * 로봇 대수 인데 이게 맞는지 확인 필요
         # 2 is a number of point cloud masks(tool and object) and 3 is a cartesian coordinate
-        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 2 + 2 + 3 + 4
+        self._num_observations = pcd_observations + 6 + 6 + 3 + 4 + 2 + 2 + 3 + 4 + 1
         '''
         refer to observations in get_observations()
         tools_pcd_flattened                           # [NE, 3*pcd_sampling_num]
@@ -113,6 +115,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         object_to_goal_vector_norm                    # [NE, 2]
         grasping_points                               # [NE, 3]
         approx_tool_rots                              # [NE, 4]
+        tool-object distance                          # [NE, 1]
         
         '''
 
@@ -258,6 +261,7 @@ class PCDMovingObjectTaskMulti(RLTask):
 
         self.abs_flange_pos = torch.zeros((self._num_envs*self.robot_num, 3), device=self._device)
         self.abs_flange_rot = torch.zeros((self._num_envs*self.robot_num, 4), device=self._device)
+        # self.abs_object_pos = torch.zeros((self._num_envs*self.robot_num, 3), device=self._device)
 
         self.robot_part_pos = torch.zeros((self._num_envs*self.robot_num, 3), device=self._device)
         self.robot_part_rot = torch.zeros((self._num_envs*self.robot_num, 4), device=self._device)
@@ -269,6 +273,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.local_env_ids = torch.arange(self.ref_robot.count, dtype=torch.int32, device=self._device)
 
         self.initial_object_goal_distance = torch.empty(self._num_envs*self.robot_num).to(self._device)
+        self.initial_tool_object_distance = torch.empty(self._num_envs*self.robot_num).to(self._device)
         self.prev_object_pos_xy = None
         # self.prev_action = None   # TODO: 코드 실행해보고 없어도 되면 이 줄 삭제
 
@@ -444,7 +449,7 @@ class PCDMovingObjectTaskMulti(RLTask):
             # flange_pos[:, 0] -= 0.2     # x
             flange_pos[:, 0] -= 0.0     # x
             flange_pos[:, 1] -= 0.3    # y
-            flange_pos[:, 2] = 0.4      # z            # Extract the x and y coordinates
+            flange_pos[:, 2] = 0.45      # z            # Extract the x and y coordinates
             flange_xy = flange_pos[:, :2]
             object_xy = object_pos[:, :2]
 
@@ -506,6 +511,7 @@ class PCDMovingObjectTaskMulti(RLTask):
 
         tools_pcd_flattened = torch.empty(self._num_envs*self.robot_num, self._pcd_sampling_num*3).to(device=self._device)
         objects_pcd_flattened = torch.empty(self._num_envs*self.robot_num, self._pcd_sampling_num*3).to(device=self._device)
+        abs_object_pcd_set = torch.zeros((self._num_envs*self.robot_num, self._pcd_sampling_num, 3), device=self._device)
         object_pcd_set = torch.empty(self._num_envs*self.robot_num, self._pcd_sampling_num, 3).to(device=self._device) # object point cloud set for getting xyz position
         # multiply by 3 because the point cloud has 3 channels (x, y, z)
 
@@ -517,6 +523,8 @@ class PCDMovingObjectTaskMulti(RLTask):
         robots_dof_vel = torch.empty(self._num_envs*self.robot_num, 6).to(device=self._device)
         approx_tool_rots = torch.empty(self._num_envs*self.robot_num, 4).to(device=self._device)
         grasping_points = torch.empty(self._num_envs*self.robot_num, 3).to(device=self._device)
+
+        self.tool_obj_distance = torch.empty(self._num_envs*self.robot_num, 1).to(self._device)
 
         for idx, robot_name in enumerate(self.robot_list):
             local_abs_env_ids = self.local_env_ids*self.robot_num + idx
@@ -560,7 +568,6 @@ class PCDMovingObjectTaskMulti(RLTask):
             robots_dof_vel[local_abs_env_ids] = self.exp_dict[robot_name]['robot_view'].get_joint_velocities(clone=False)[:, 0:6]
             
             # Calculate tool's grasping point and orientation from transformed PCD using PCA and predefined positions/rotations
-            
             imaginary_grasping_point = get_imaginary_grasping_point(abs_flange_pos, abs_flange_rot)
             cropped_tool_pcd = crop_tool_pcd(tool_pcd_transformed, imaginary_grasping_point)
             tool_tip_point = get_tool_tip_position(imaginary_grasping_point, tool_pcd_transformed)
@@ -572,6 +579,7 @@ class PCDMovingObjectTaskMulti(RLTask):
 
             # transform pcd and coordinates
             if self._base_coord == 'flange':
+                abs_object_pcd_set[local_abs_env_ids] = object_pcd_transformed
                 flange_pos[local_abs_env_ids] = torch.zeros_like(robot_flanges.get_local_poses()[0])
                 flange_rot[local_abs_env_ids] = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self._device).expand(self.num_envs, 4)
                 tool_pcd_transformed = transform_points(tool_pcd_transformed, ee_transform)
@@ -593,6 +601,8 @@ class PCDMovingObjectTaskMulti(RLTask):
 
             grasping_points[local_abs_env_ids] = real_grasping_point
             approx_tool_rots[local_abs_env_ids] = approx_tool_rot
+
+            self.tool_obj_distance[local_abs_env_ids], min_indices = closest_distance_between_sets(tool_pcd_transformed, object_pcd_transformed)
 
 
             '''
@@ -624,6 +634,7 @@ class PCDMovingObjectTaskMulti(RLTask):
                                object_pos, object_rot,
                                flange_pos[local_abs_env_ids], flange_rot[local_abs_env_ids],
                                goal_pos[local_abs_env_ids],
+                               min_indices,
                                self._base_coord,
                                view_idx=0)
             # visualize the point cloud
@@ -636,8 +647,11 @@ class PCDMovingObjectTaskMulti(RLTask):
             robot_part_position = flange_pos
             robot_part_orientation = flange_rot
 
-        self.object_pos_xyz = torch.mean(object_pcd_set, dim=1)
-        self.object_pos_xy = self.object_pos_xyz[:, [0, 1]]
+        abs_obj_pos_xyz = torch.mean(abs_object_pcd_set, dim=1)
+        self.abs_obj_pos_xy = abs_obj_pos_xyz[:, [0, 1]]
+
+        object_pos_xyz = torch.mean(object_pcd_set, dim=1)
+        self.object_pos_xy = object_pos_xyz[:, [0, 1]]
 
         self.goal_pos_xy = goal_pos[:, [0, 1]]
 
@@ -682,7 +696,8 @@ class PCDMovingObjectTaskMulti(RLTask):
                                   self.goal_pos_xy,                                             # [NE, 2]
                                   object_to_goal_unit_vec,                                      # [NE, 2]
                                   grasping_points,                                              # [NE, 3]
-                                  approx_tool_rots                                              # [NE, 4]
+                                  approx_tool_rots,                                             # [NE, 4]
+                                  self.tool_obj_distance                                        # [NE, 1]
                                  ), dim=1)
 
         if self._control_space == "cartesian":
@@ -703,58 +718,47 @@ class PCDMovingObjectTaskMulti(RLTask):
         if not hasattr(self, 'prev_object_pos_xy') or not hasattr(self, 'prev_flange_pos'):
             self.prev_object_pos_xy = self.object_pos_xy.clone()
             self.prev_flange_pos = self.abs_flange_pos.clone()
+            self.prev_tool_obj_distance = self.tool_obj_distance.view(-1).clone()
 
         current_object_goal_distance = LA.vector_norm(self.goal_pos_xy - self.object_pos_xy, ord=2, dim=1)
+        current_tool_obj_distance = self.tool_obj_distance.view(-1)
         self.initial_object_goal_distance[initialized_idx] = current_object_goal_distance[initialized_idx]
+        self.initial_tool_object_distance[initialized_idx] = current_tool_obj_distance[initialized_idx]
 
+        '''When delta object-goal distance is negative, distance reward = 0'''
+        # Delta Object-Goal Distance Reward
+        prev_obj_goal_distance = LA.vector_norm(self.goal_pos_xy - self.prev_object_pos_xy, ord=2, dim=1)
+        curr_obj_goal_distance = LA.vector_norm(self.goal_pos_xy - self.object_pos_xy, ord=2, dim=1)
+        # delta_object_goal_distance = curr_obj_goal_distance - prev_obj_goal_distance
+        delta_object_goal_distance = prev_obj_goal_distance - curr_obj_goal_distance
+        delta_object_goal_distance = torch.where(delta_object_goal_distance > -0.001,
+                                                 torch.abs(delta_object_goal_distance),
+                                                 delta_object_goal_distance)
+        
         # Object-Goal Distance Reward
-        object_goal_distance_reward = torch.where(
-            current_object_goal_distance < self.initial_object_goal_distance,
-            self.relu(-(current_object_goal_distance - self.initial_object_goal_distance) / (self.initial_object_goal_distance + 1e-8)),
-            torch.zeros_like(current_object_goal_distance)  # No reward if distance increased
-        )
+        object_goal_distance_reward = torch.where(delta_object_goal_distance >= 0,
+                                                  self.relu(-(current_object_goal_distance - self.initial_object_goal_distance) / (self.initial_object_goal_distance)),
+                                                  torch.zeros_like(delta_object_goal_distance))
+        '''obj-goal 사이 거리가 가까워 지거나(prev - curr > 0) 멀어지지 않으면(prev - curr ≒ 0) reward를 준다.'''
 
-        # Object movement
-        object_movement = self.object_pos_xy - self.prev_object_pos_xy
-        object_moved_norm = LA.vector_norm(object_movement, ord=2, dim=1)
-
-        # End-effector movement and velocity
-        ee_movement = self.abs_flange_pos[:, :2] - self.prev_flange_pos[:, :2]
-        ee_moved_norm = LA.vector_norm(ee_movement, ord=2, dim=1)
-
-        # Movement towards goal
-        # How aligned the object’s movement is with the direction towards the goal. It's essentially calculating the dot product of the movement vector and the direction to the goal.
-        # The denominator calculates the magnitude of the vector pointing from the previous object position to the goal.
-        movement_towards_goal = torch.sum(object_movement * (self.goal_pos_xy - self.prev_object_pos_xy), dim=1) / (LA.norm(self.goal_pos_xy - self.prev_object_pos_xy, ord=2, dim=1) + 1e-8)
-        # Reward for movement towards goal, penalize movement away from goal
-        movement_reward = torch.where(movement_towards_goal > 0,
-                                      movement_towards_goal * 2.0,  # Positive reward for moving towards goal
-                                      movement_towards_goal * 4.0)  # Stronger negative reward for moving away from goal
-
-        # Tool-Object Interaction Reward
-        object_moved = torch.linalg.vector_norm(object_movement, ord=2, dim=1) > 1e-4  # Threshold to detect movement
-        interaction_reward = object_moved.float() * 0.1  # Small reward for moving the object
-
-        # End-effector Movement Efficiency Reward
-        efficiency_reward = torch.where(ee_moved_norm > 0,
-                                        object_moved_norm / (ee_moved_norm + 1e-8),
-                                        torch.zeros_like(ee_moved_norm))
-        efficiency_reward = torch.clamp(efficiency_reward, 0, 1) * 0.5
-
-        # Relative velocity between end-effector and object
-        object_velocity = object_movement / self.dt
-        ee_velocity = ee_movement / self.dt
-        relative_velocity = torch.linalg.vector_norm(ee_velocity - object_velocity, ord=2, dim=1)
-        relative_velocity_panaly = -relative_velocity * 0.1  # Penalize high relative velocity
+        # Delta Tool-Object Distance Reward
+        # delta_tool_obj_distance = current_tool_obj_distance - self.prev_tool_obj_distance
+        delta_tool_obj_distance = self.prev_tool_obj_distance - current_tool_obj_distance
+        delta_tool_obj_distance = torch.where(delta_tool_obj_distance > -0.001,
+                                              torch.abs(delta_tool_obj_distance),
+                                              delta_tool_obj_distance)
+        
+        # Tool-Object Distance Reward
+        tool_object_distance_reward = torch.where(delta_tool_obj_distance >= 0,
+                                                  self.relu(-(current_tool_obj_distance - self.initial_tool_object_distance) / (self.initial_tool_object_distance)),
+                                                  torch.zeros_like(delta_tool_obj_distance))
+        '''tool-obj 사이 거리가 가까워 지거나(prev - curr > 0) 멀어지지 않으면(prev - curr ≒ 0) reward를 준다.'''
 
 
         # Combine rewards
         total_reward = (
-            object_goal_distance_reward * 2.0 +
-            movement_reward +
-            interaction_reward +
-            efficiency_reward +
-            relative_velocity_panaly            
+            object_goal_distance_reward +
+            tool_object_distance_reward * 0.2       
         )
 
         # completion reward
@@ -769,6 +773,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         # Store current state for next iteration
         self.prev_object_pos_xy = self.object_pos_xy.clone()
         self.prev_flange_pos = self.abs_flange_pos.clone()
+        self.prev_tool_obj_distance = self.tool_obj_distance.view(-1).clone()
     
 
     def is_done(self) -> None:
@@ -778,13 +783,15 @@ class PCDMovingObjectTaskMulti(RLTask):
         # # workspace regularization
         reset = torch.where(self.abs_flange_pos[:, 0] < self.x_min, ones, reset)
         reset = torch.where(self.abs_flange_pos[:, 1] < self.y_min, ones, reset)
+        reset = torch.where(self.abs_flange_pos[:, 2] < self.z_min, ones, reset)
         reset = torch.where(self.abs_flange_pos[:, 0] > self.x_max, ones, reset)
         reset = torch.where(self.abs_flange_pos[:, 1] > self.y_max, ones, reset)
-        reset = torch.where(self.abs_flange_pos[:, 2] > 0.5, ones, reset)
-        reset = torch.where(self.object_pos_xy[:, 0] < self.x_min, ones, reset)
-        reset = torch.where(self.object_pos_xy[:, 1] < self.y_min, ones, reset)
-        reset = torch.where(self.object_pos_xy[:, 0] > self.x_max, ones, reset)
-        reset = torch.where(self.object_pos_xy[:, 1] > self.y_max, ones, reset)
+        reset = torch.where(self.abs_flange_pos[:, 2] > self.z_max, ones, reset)
+        
+        reset = torch.where(self.abs_obj_pos_xy[:, 0] < self.x_min, ones, reset)
+        reset = torch.where(self.abs_obj_pos_xy[:, 1] < self.y_min, ones, reset)
+        reset = torch.where(self.abs_obj_pos_xy[:, 0] > self.x_max, ones, reset)
+        reset = torch.where(self.abs_obj_pos_xy[:, 1] > self.y_max, ones, reset)
         # reset = torch.where(self.object_pos_xy[:, 2] > 0.5, ones, reset)    # prevent unexpected object bouncing
 
         # object reached
