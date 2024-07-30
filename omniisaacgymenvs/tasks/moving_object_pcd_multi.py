@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch import linalg as LA
+import os
 import numpy as np
 import math
 from copy import deepcopy
@@ -53,6 +54,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         self.camera_height = 640
         #################### BSH
 
+        self.isaac_root_path = os.path.join(os.path.expanduser('~'), ".local/share/ov/pkg/isaac-sim-2023.1.1")
         self.update_config(sim_config)
 
         self.step_num = 0
@@ -124,11 +126,11 @@ class PCDMovingObjectTaskMulti(RLTask):
         for name in self.robot_list:
             # get tool pcd
             tool_name = name.split('_')[1]
-            tool_ply_path = f"/home/bak/.local/share/ov/pkg/isaac-sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/{tool_name}/{tool_name}.ply"
+            tool_ply_path = os.path.join(self.isaac_root_path, f"OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/{tool_name}/{tool_name}.ply")
             tool_pcd = get_pcd(tool_ply_path, self._num_envs, self._pcd_sampling_num, device=self.cfg["rl_device"], tools=True)
 
             # get object pcd
-            object_ply_path = f"/home/bak/.local/share/ov/pkg/isaac-sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/cylinder/cylinder.ply"
+            object_ply_path = os.path.join(self.isaac_root_path, f"OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/cylinder/cylinder.ply")
             object_pcd = get_pcd(object_ply_path, self._num_envs, self._pcd_sampling_num, device=self.cfg["rl_device"], tools=False)
 
             self.exp_dict[name] = {
@@ -160,7 +162,7 @@ class PCDMovingObjectTaskMulti(RLTask):
         tensor_args = TensorDeviceType()
         robot_config_file = load_yaml(join_path(get_robot_configs_path(), "ur5e.yml"))
         robot_config = robot_config_file["robot_cfg"]
-        collision_file = "/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/collision_bar.yml"
+        collision_file = os.path.join(self.isaac_root_path, "OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/collision_bar.yml")
         
         world_cfg = WorldConfig.from_dict(load_yaml(collision_file))
 
