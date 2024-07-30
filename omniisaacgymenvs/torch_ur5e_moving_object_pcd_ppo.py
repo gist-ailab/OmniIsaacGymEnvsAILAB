@@ -27,7 +27,6 @@ set_seed(seed)  # e.g. `set_seed(42)` for fixed seed
 
 task_name = "PCDMovingObjectMulti"   # "PCDMovingObject", "PCDMovingObjectSingle" or "PCDMovingObjectMulti"
 env = load_omniverse_isaacgym_env(task_name=task_name)
-
 env = wrap_env(env)
 
 device = env.device
@@ -39,6 +38,7 @@ else:
     num_envs = env.num_envs
 memory = RandomMemory(memory_size=16, num_envs=num_envs, device=device)
 
+oige_root_path = os.path.join(os.path.expanduser("~"), ".local/share/ov/pkg/isaac-sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs")
 # instantiate the agent's models (function approximators).
 # PPO requires 2 models, visit its documentation for more details
 # https://skrl.readthedocs.io/en/latest/api/agents/ppo.html#models
@@ -88,20 +88,21 @@ cfg["experiment"]["checkpoint_interval"] = 100
 
 now = datetime.now()
 formatted_date = now.strftime("%y%m%d_%H%M%S")
-cfg["experiment"]["experiment_name"] = f"{formatted_date}_PCD_Moving_Target"
+cfg["experiment"]["experiment_name"] = f"{formatted_date}_PCD_Moving_Object"
 # cfg["experiment"]["experiment_name"] = f"240610_134535_PCD_Moving_Target_continue"
 
-cfg["experiment"]["directory"] = "runs/torch/PCDMovingTarget"
+cfg["experiment"]["directory"] = "runs/torch/PCDMovingObjectMulti"
 cfg["experiment"]["checkpoint_dir"] = "checkpoints"
 
-# cfg["experiment"]["wandb"] = True
-# cfg["experiment"]["wandb_kwargs"] = {
-#     "project": "ToolMani",
-#     "save_code": True,
-#     "sync_tensorboard": True,
-#     # "id": "x7mmaz8nnw=nwuserpsh9002",
-#     # "resume": True,
-# }
+cfg["experiment"]["wandb"] = False
+if cfg["experiment"]["wandb"]:
+    cfg["experiment"]["wandb_kwargs"] = {
+        "project": "ToolMani",
+        "save_code": True,
+        "sync_tensorboard": True,   
+        # "id": "x7mmaz8nnw=nwuserpsh9002",
+        # "resume": True,
+    }
 
 agent = PPO(models=models,
             memory=memory,
@@ -113,25 +114,25 @@ agent = PPO(models=models,
 # agent.load(path)
 
 # configure and instantiate the RL trainer
-cfg_trainer = {"timesteps": 30000, "headless": False}
+cfg_trainer = {"timesteps": 50000, "headless": False}
 trainer = SequentialTrainer(cfg=cfg_trainer, env=env, agents=agent)
-# trainer = ParallelTrainer(cfg=cfg_trainer, env=env, agents=agent)
 
-# if cfg["experiment"]["wandb_kwargs"]["save_code"]:
-#     wandb.save('/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/tasks/moving_target_pcd.py')
+task_file = os.path.join(oige_root_path, "tasks/moving_object_pcd_multi.py")
+if cfg["experiment"]["wandb"] and cfg["experiment"]["wandb_kwargs"]["save_code"]:
+    wandb.save(task_file)
 
 # start training
 trainer.train()
 
-# if cfg["experiment"]["wandb_kwargs"]["save_code"]:
-#     pth_path = os.path.join(cfg["experiment"]["directory"], cfg["experiment"]["experiment_name"])
-#     wandb.save(f'{pth_path}/checkpoints/best_agent.pt')
-#     '''
-#     학습 중간에 저장하고 싶으면
-#     /home/bak/anaconda3/envs/isaac-sim/lib/python3.10/site-packages/skrl/trainers/torch/base.py
-#     위의 post-interaction 뒤에 저장해야 한다.
-#     post-interaction 구현은 /home/bak/anaconda3/envs/isaac-sim/lib/python3.10/site-packages/skrl/agents/torch/base.py에 있음       
-#     '''
+if cfg["experiment"]["wandb"] and cfg["experiment"]["wandb_kwargs"]["save_code"]:
+    pth_path = os.path.join(cfg["experiment"]["directory"], cfg["experiment"]["experiment_name"])
+    wandb.save(f'{pth_path}/checkpoints/best_agent.pt')
+    '''
+    학습 중간에 저장하고 싶으면
+    /home/bak/anaconda3/envs/isaac-sim/lib/python3.10/site-packages/skrl/trainers/torch/base.py
+    위의 post-interaction 뒤에 저장해야 한다.
+    post-interaction 구현은 /home/bak/anaconda3/envs/isaac-sim/lib/python3.10/site-packages/skrl/agents/torch/base.py에 있음       
+    '''
 
 # # ---------------------------------------------------------
 # # comment the code above: `trainer.train()`, and...
@@ -141,7 +142,7 @@ trainer.train()
 
 # # download the trained agent's checkpoint from Hugging Face Hub and load it
 # # path = download_model_from_huggingface("skrl/OmniIsaacGymEnvs-FrankaCabinet-PPO", filename="agent.pt")
-# path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/PCDMovingTarget/240623_235519_PCD_Moving_Target/checkpoints/best_agent.pt'
+# path = os.path.join(oige_root_path, 'runs/torch/PCDMovingTarget/240727_025847_PCD_Moving_Target/checkpoints/agent_39800.pt')
 # agent.load(path)
 
 # # start evaluation
