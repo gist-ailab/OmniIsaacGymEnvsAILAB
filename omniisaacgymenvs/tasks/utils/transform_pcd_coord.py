@@ -22,6 +22,7 @@ def visualize_pcd(
                   object_pos, object_rot,
                   flange_pos, flange_rot,
                   goal_pos,
+                  min_indices,
                   base_coord='flange',  # robot_base or flange
                   view_idx=0):
     
@@ -147,6 +148,16 @@ def visualize_pcd(
     T_g_p[:3, 3] = goal_pos_np
     goal_position = deepcopy(goal_cone).transform(T_g_p)
 
+    #Closest point between two point clouds
+    min_indices_np = min_indices[view_idx].cpu().numpy()
+    closest_point_tool = tool_transformed_pcd_np[min_indices_np[0]]
+    closest_point_obj = obj_transformed_pcd_np[min_indices_np[1]]
+    closest_points = np.array([closest_point_tool, closest_point_obj])
+    closest_line = o3d.geometry.LineSet()
+    closest_line.points = o3d.utility.Vector3dVector(closest_points)
+    closest_line.lines = o3d.utility.Vector2iVector([[0, 1]])
+    closest_line.colors = o3d.utility.Vector3dVector([[0, 0, 1]])  # Red for tool, Green for object
+
     # goal_pos_xy_np = copy.deepcopy(goal_pos_np)
     # goal_pos_xy_np[2] = self.target_height
     # goal_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
@@ -168,6 +179,7 @@ def visualize_pcd(
                                         obj_coord,
                                         flange_coord,
                                         goal_position,
+                                        closest_line,
                                         yz_plane,
                                     # goal_position_xy
                                     ],
@@ -559,6 +571,45 @@ def transform_principal_axis(transformation_matrix, principal_axis):
     transformed_axis = F.normalize(transformed_axis, dim=1)
 
     return transformed_axis
+
+
+def closest_distance_between_sets(point_cloud_A, point_cloud_B):
+    """
+    Compute the closest distance between two sets of point clouds for multiple environments.
+    The distance is the minimum distance between any point in set A and any point in set B.
+    
+    Args:
+    point_cloud_A: Tensor of shape [num_envs, num_points_A, 3]
+    point_cloud_B: Tensor of shape [num_envs, num_points_B, 3]
+    
+    Returns:
+    min_distances: Tensor of shape [num_envs] containing the closest distance between sets for each environment
+    min_indices: Tensor of shape [num_envs, 2] containing the indices of closest points in A and B for each environment
+    """
+    assert point_cloud_A.dim() == 3 and point_cloud_B.dim() == 3
+    assert point_cloud_A.shape[2] == 3 and point_cloud_B.shape[2] == 3
+    assert point_cloud_A.shape[0] == point_cloud_B.shape[0]
+    
+    num_envs = point_cloud_A.shape[0]
+    
+    # Calculate pairwise squared distances
+    A_expanded = point_cloud_A.unsqueeze(2)  # Shape: [num_envs, num_points_A, 1, 3]
+    B_expanded = point_cloud_B.unsqueeze(1)  # Shape: [num_envs, 1, num_points_B, 3]
+    distances = torch.sum((A_expanded - B_expanded) ** 2, dim=3)  # Shape: [num_envs, num_points_A, num_points_B]
+    
+    # Find the minimum distance and corresponding indices for each environment
+    min_distances, min_indices_B = torch.min(distances.view(num_envs, -1), dim=1)
+    min_distances = min_distances.view(num_envs, 1)
+    
+    # Calculate the indices in A and B
+    min_indices_A = min_indices_B // point_cloud_B.shape[1]
+    min_indices_B = min_indices_B % point_cloud_B.shape[1]
+    
+    min_indices = torch.stack((min_indices_A, min_indices_B), dim=1)
+    
+    
+    return torch.sqrt(min_distances), min_indices
+
 
 
 # Helper function to calculate rotation matrix from two vectors
