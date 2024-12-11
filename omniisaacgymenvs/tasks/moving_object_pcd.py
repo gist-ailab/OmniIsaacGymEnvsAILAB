@@ -200,7 +200,7 @@ class PCDMovingObjectTask(RLTask):
         self._object = RigidPrimView(prim_paths_expr="/World/envs/.*/object", name="object_view", reset_xform_properties=False)
         scene.add(self._object)
         self._goal = RigidPrimView(prim_paths_expr="/World/envs/.*/goal", name="goal_view", reset_xform_properties=False)
-        self._goal._non_root_link = True    # do not set states for kinematics
+        # self._goal._non_root_link = True    # do not set states for kinematics
         scene.add(self._goal)
 
         self.init_data()
@@ -323,6 +323,8 @@ class PCDMovingObjectTask(RLTask):
              apply_action: apply multiple targets (position, velocity, and/or effort) in the same call
              (effort control means force/torque control)
             '''
+            # TODO: ArticulationActions와 apply_action에 있는 indices는 움직일 joint들의 index를 의미한다. 수정 필요
+            # https://docs.omniverse.nvidia.com/py/isaacsim/source/extensions/omni.isaac.core/docs/index.html#omni.isaac.core.articulations.Articulation.apply_action
             action = ArticulationActions(joint_positions=self.robot_dof_targets[sub_envs])
             getattr(self, f"_{self.robot_list[idx]}").apply_action(action, indices=sub_envs)
         # self._targets.enable_rigid_body_physics()

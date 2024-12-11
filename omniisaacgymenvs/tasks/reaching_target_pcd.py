@@ -99,7 +99,7 @@ class PCDReachingTargetTask(RLTask):
 
         # get tool point cloud from ply and convert it to torch tensor
         device = torch.device(self.cfg["rl_device"])
-        tool_o3d_pcd = o3d.io.read_point_cloud("/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.0-hotfix.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/tool.ply")
+        tool_o3d_pcd = o3d.io.read_point_cloud("/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/robots/articulations/ur5e_tool/usd/tool/tool/tool.ply")
         o3d_downsampled_pcd = tool_o3d_pcd.farthest_point_down_sample(self._pcd_sampling_num)
         downsampled_points = np.array(o3d_downsampled_pcd.points)
         tool_pcd = torch.from_numpy(downsampled_points).to(device)
@@ -338,8 +338,8 @@ class PCDReachingTargetTask(RLTask):
         
 
     def init_data(self) -> None:
-        self.robot_default_dof_pos = torch.tensor(np.radians([-40, -45, 60, -100, -90, 90.0,
-                                                              0.0, 0.0, 0.0, 0.0]), device=self._device, dtype=torch.float32)
+        self.robot_default_dof_pos = torch.tensor(np.radians([-60, -80, 80, -90, -90, -40,
+                                                              0, 30, 0.0, 0, -0.03]), device=self._device, dtype=torch.float32)
 
         self.actions = torch.zeros((self._num_envs, self.num_actions), device=self._device)
 

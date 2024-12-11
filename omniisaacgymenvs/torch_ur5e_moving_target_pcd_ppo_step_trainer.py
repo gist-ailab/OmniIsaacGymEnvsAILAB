@@ -77,10 +77,10 @@ cfg["value_preprocessor"] = RunningStandardScaler
 cfg["value_preprocessor_kwargs"] = {"size": 1, "device": device}
 
 # logging to TensorBoard and write checkpoints (in timesteps)
-# cfg["experiment"]["write_interval"] = 100
-# cfg["experiment"]["checkpoint_interval"] = 500
-cfg["experiment"]["write_interval"] = 1
-cfg["experiment"]["checkpoint_interval"] = 4
+cfg["experiment"]["write_interval"] = 10
+cfg["experiment"]["checkpoint_interval"] = 100
+# cfg["experiment"]["write_interval"] = 1
+# cfg["experiment"]["checkpoint_interval"] = 4
 
 now = datetime.now()
 formatted_date = now.strftime("%y%m%d_%H%M%S")
@@ -92,7 +92,7 @@ cfg["experiment"]["wandb"] = True
 cfg["experiment"]["wandb_kwargs"] = {
     "project": "ToolMani",
     "save_code": True,
-    # "sync_tensorboard": True,
+    "sync_tensorboard": True,
     "name": f"{formatted_date}_PCD_Moving_Target_train",
     "tags": 't',
     "reinit": True
@@ -108,7 +108,7 @@ agent = PPO(models=models,
 # agent.load(path)
 
 # configure and instantiate the RL trainer
-cfg_trainer = {"timesteps": 50000, "headless": False}
+cfg_trainer = {"timesteps": 30000, "headless": False}
 trainer = StepTrainer(cfg=cfg_trainer, env=env, agents=agent)
 
 if cfg["experiment"]["wandb_kwargs"]["save_code"]:
@@ -118,13 +118,12 @@ eval_cfg = deepcopy(cfg)
 eval_cfg["experiment"]["write_interval"] = 1
 eval_cfg["experiment"]["wandb_kwargs"] = {
     "project": "ToolMani",
-    # "save_code": True,
-    # "sync_tensorboard": True,
+    "sync_tensorboard": True,
     "name": f"{formatted_date}_PCD_Moving_Target_eval",
     "tags": 'e',
     "reinit": True
 }
-eval_interval = 8
+eval_interval = 300
 assert eval_interval % eval_cfg["experiment"]["checkpoint_interval"] == 0, "eval_interval must be divisible by checkpoint_interval"
 eval_memory = RandomMemory(memory_size=16, num_envs=env.num_envs, device=device)
 eval_agent = PPO(models=models,
@@ -138,15 +137,26 @@ evaluater = StepTrainer(cfg=eval_cfg, env=env, agents=eval_agent)
 for timestep in range(cfg_trainer["timesteps"]):
     trainer.train(timestep=timestep)
     if timestep % eval_interval == 0 and timestep > 0:
+
+
+        
         '''그때그때 불러와서 interval만 바꾸어 평가하면 될듯'''
 
-        # path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs'
-        path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/' # debug 할 때 사용
+        path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs/runs/torch/PCDMovingTarget'
+        # path = '/home/bak/.local/share/ov/pkg/isaac_sim-2023.1.1/' # debug 할 때 사용
         path = os.path.join(path,
                             eval_cfg["experiment"]["directory"],
                             eval_cfg["experiment"]["experiment_name"],
                             eval_cfg["experiment"]["checkpoint_dir"],
                             f'agent_{timestep}.pt')
+
+        # path = os.path.join(path,                            
+        #                     eval_cfg["experiment"]["experiment_name"],
+        # )
+        # path = os.path.join(path,
+        #                     eval_cfg["experiment"]["checkpoint_dir"],)
+        # path = os.path.join(path,
+        #                     f'agent_{timestep}.pt')
         
         eval_agent.load(path)
 

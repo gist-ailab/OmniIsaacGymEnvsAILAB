@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import os
+import os, sys
 from datetime import datetime
 
 # import the skrl components to build the RL system
@@ -18,6 +18,7 @@ from skrl.utils import set_seed
 
 import wandb
 
+# sys.path.append('/home/bak/.local/share/ov/pkg/isaac-sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs')
 # from omniisaacgymenvs.model.shared_transformer import SharedTransformerEnc
 from omniisaacgymenvs.model.shared import Shared
 
@@ -38,7 +39,7 @@ else:
     num_envs = env.num_envs
 memory = RandomMemory(memory_size=16, num_envs=num_envs, device=device)
 
-oige_root_path = os.path.join(os.path.expanduser("~"), ".local/share/ov/pkg/isaac-sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs")
+oige_root_path = os.path.join(os.path.expanduser("~"), ".local/share/ov/pkg/isaac_sim-2023.1.1/OmniIsaacGymEnvs/omniisaacgymenvs")
 # instantiate the agent's models (function approximators).
 # PPO requires 2 models, visit its documentation for more details
 # https://skrl.readthedocs.io/en/latest/api/agents/ppo.html#models

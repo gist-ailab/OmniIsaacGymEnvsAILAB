@@ -7,7 +7,7 @@ physics_engine: ${..physics_engine}
 env:
   # numEnvs: ${resolve_default:4096,${...num_envs}}
   # numEnvs: ${resolve_default:2048,${...num_envs}}
-  numEnvs: ${resolve_default:6,${...num_envs}}
+  numEnvs: ${resolve_default:18,${...num_envs}}
   envSpacing: 2.0
   episodeLength: 300
   # episodeLength: 100
@@ -117,7 +117,7 @@ sim:
     contact_offset: 0.005
     rest_offset: 0.0
   
-  target: # BSH
+  object: # BSH
     override_usd_defaults: False
     # make_kinematic: False # BSH
     # make_kinematic: False # BSH
